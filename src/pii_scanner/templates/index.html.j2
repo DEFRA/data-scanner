@@ -6,7 +6,10 @@
 <span class="govuk-caption-l">Personal data scan</span>
 <h1 class="govuk-heading-xl">{{ summary.orgs|map('org_name')|join(', ') }} public repositories</h1>
 <p class="govuk-body-l">
-  {{ summary.repos_total }} public repositories in inventory, {{ summary.repos_with_findings }} with findings.
+  {% set needs_review = summary.repos_with_review[False] + summary.repos_with_review[True] %}
+  {{ summary.repos_total }} public repositories in inventory, {{ summary.repos_with_findings }} with findings,
+  of which {{ needs_review }} ({{ summary.repos_with_review[False] }} active, {{ summary.repos_with_review[True] }} archived) need review.
+  {% if summary.repos_with_findings > needs_review %}The other {{ summary.repos_with_findings - needs_review }} only have Minimal, Likely fake or triaged findings.{% endif %}
 </p>
 <p class="govuk-body app-muted">
   {% if run %}Run {{ run.id }} started {{ run.started_at }}, finished {{ run.finished_at }} ({{ run.mode }}).
@@ -14,22 +17,81 @@
 </p>
 
 <h2 class="govuk-heading-l">Findings needing review</h2>
-{% for q, label, page in [('A', 'Queue A: production code, data files and wikis', 'queue-a.html'), ('B', 'Queue B: tests, fixtures and docs', 'queue-b.html')] %}
-<h3 class="govuk-heading-m"><a class="govuk-link" href="{{ page }}">{{ label }}</a></h3>
-<div class="app-stats">
-  {% for b in ['High', 'Medium', 'Low'] %}
-  <div class="app-stat">
-    <span class="app-stat__label">{{ band_tag(b) }}</span>
-    <span class="app-stat__value"><a class="govuk-link govuk-link--no-visited-state" href="{{ page }}">{{ summary.band_queue[(q, b)] }}</a></span>
-  </div>
+<p class="govuk-body">
+  {{ summary.repos_with_review[False] }} active and {{ summary.repos_with_review[True] }} archived repositories have findings needing review.
+  Select a number to open that queue filtered to it.
+</p>
+{% set statuses = [(False, 'Active', '0'), (True, 'Archived', '1')] %}
+<table class="govuk-table app-table--auto">
+<thead class="govuk-table__head">
+<tr class="govuk-table__row">
+  <td class="govuk-table__header"></td>
+  {% for q, label, page in [('A', 'Queue A: production code, data files and wikis', 'queue-a.html'), ('B', 'Queue B: tests, fixtures and docs', 'queue-b.html')] %}
+  <th scope="colgroup" colspan="3" class="govuk-table__header app-table__group"><a class="govuk-link" href="{{ page }}">{{ label }}</a></th>
   {% endfor %}
-</div>
+</tr>
+<tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header">Band</th>
+  {% for q in ['A', 'B'] %}{% for _, label, _ in statuses %}<th scope="col" class="govuk-table__header govuk-table__header--numeric{% if loop.first %} app-table__group{% endif %}">{{ label }}</th>{% endfor %}<th scope="col" class="govuk-table__header govuk-table__header--numeric">Total</th>{% endfor %}
+</tr>
+</thead>
+<tbody class="govuk-table__body">
+{% for b in ['High', 'Medium', 'Low'] %}
+<tr class="govuk-table__row">
+  <th scope="row" class="govuk-table__header">{{ band_tag(b) }}</th>
+  {% for q in ['A', 'B'] %}
+  {% for archived, _, value in statuses %}
+  <td class="govuk-table__cell govuk-table__cell--numeric{% if loop.first %} app-table__group{% endif %}"><a class="govuk-link govuk-link--no-visited-state" href="queue-{{ q|lower }}.html?band={{ b }}&amp;archived={{ value }}">{{ summary.band_queue[(q, b, archived)] }}</a></td>
+  {% endfor %}
+  <td class="govuk-table__cell govuk-table__cell--numeric"><a class="govuk-link govuk-link--no-visited-state" href="queue-{{ q|lower }}.html?band={{ b }}"><strong>{{ summary.band_queue[(q, b, False)] + summary.band_queue[(q, b, True)] }}</strong></a></td>
+  {% endfor %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% set minimal = namespace(active=0, archived=0) %}
+{% set fake = namespace(active=0, archived=0) %}
+{% for q in ['A', 'B'] %}
+{% set minimal.active = minimal.active + summary.band_queue[(q, 'Minimal', False)] %}
+{% set minimal.archived = minimal.archived + summary.band_queue[(q, 'Minimal', True)] %}
+{% set fake.active = fake.active + summary.band_queue[(q, 'Likely fake', False)] %}
+{% set fake.archived = fake.archived + summary.band_queue[(q, 'Likely fake', True)] %}
 {% endfor %}
 <p class="govuk-body">
-  Minimal risk: {{ summary.band_queue[('A', 'Minimal')] + summary.band_queue[('B', 'Minimal')] }}.
-  Likely fake (known test or reserved values): {{ summary.band_queue[('A', 'Likely fake')] + summary.band_queue[('B', 'Likely fake')] }}.
+  Minimal risk: {{ minimal.active + minimal.archived }} ({{ minimal.active }} active, {{ minimal.archived }} archived).
+  Likely fake (known test or reserved values): {{ fake.active + fake.archived }} ({{ fake.active }} active, {{ fake.archived }} archived).
   These are listed on each repository page.
 </p>
+
+<h3 class="govuk-heading-m">Repositories by band</h3>
+<p class="govuk-body">How many repositories have at least one finding needing review in each band. A repository with High and Low findings is counted in both rows.</p>
+<table class="govuk-table app-table--auto">
+<thead class="govuk-table__head">
+<tr class="govuk-table__row">
+  <td class="govuk-table__header"></td>
+  {% for label in ['Queue A', 'Queue B', 'Either queue'] %}
+  <th scope="colgroup" colspan="3" class="govuk-table__header app-table__group">{{ label }}</th>
+  {% endfor %}
+</tr>
+<tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header">Band</th>
+  {% for _ in range(3) %}{% for _, label, _ in statuses %}<th scope="col" class="govuk-table__header govuk-table__header--numeric{% if loop.first %} app-table__group{% endif %}">{{ label }}</th>{% endfor %}<th scope="col" class="govuk-table__header govuk-table__header--numeric">Total</th>{% endfor %}
+</tr>
+</thead>
+<tbody class="govuk-table__body">
+{% for b, label in [('High', None), ('Medium', None), ('Low', None), ('any', 'Any band')] %}
+<tr class="govuk-table__row">
+  <th scope="row" class="govuk-table__header">{{ label or band_tag(b) }}</th>
+  {% for q in ['A', 'B', 'any'] %}
+  {% for archived, _, _ in statuses %}
+  <td class="govuk-table__cell govuk-table__cell--numeric{% if loop.first %} app-table__group{% endif %}">{{ summary.repos_by_band[(q, b, archived)] }}</td>
+  {% endfor %}
+  <td class="govuk-table__cell govuk-table__cell--numeric"><strong>{{ summary.repos_by_band[(q, b, False)] + summary.repos_by_band[(q, b, True)] }}</strong></td>
+  {% endfor %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
 <p class="govuk-body app-muted">
   Sources of reviewable findings: {% for s, n in summary.sources.items() %}{{ s }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}.
 </p>
@@ -45,17 +107,24 @@
 
 <h2 class="govuk-heading-l">Still exposed on the default branch vs history only</h2>
 <table class="govuk-table app-table--auto">
-<thead class="govuk-table__head"><tr class="govuk-table__row">
+<thead class="govuk-table__head">
+<tr class="govuk-table__row">
+  <td class="govuk-table__header"></td>
+  <th scope="colgroup" colspan="2" class="govuk-table__header app-table__group">Still present on default branch</th>
+  <th scope="colgroup" colspan="2" class="govuk-table__header app-table__group">History only</th>
+</tr>
+<tr class="govuk-table__row">
   <th scope="col" class="govuk-table__header">Band</th>
-  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Still present on default branch</th>
-  <th scope="col" class="govuk-table__header govuk-table__header--numeric">History only</th>
-</tr></thead>
+  {% for _ in range(2) %}{% for _, label, _ in statuses %}<th scope="col" class="govuk-table__header govuk-table__header--numeric{% if loop.first %} app-table__group{% endif %}">{{ label }}</th>{% endfor %}{% endfor %}
+</tr>
+</thead>
 <tbody class="govuk-table__body">
 {% for b in ['High', 'Medium', 'Low'] %}
 <tr class="govuk-table__row">
   <th scope="row" class="govuk-table__header">{{ band_tag(b) }}</th>
-  <td class="govuk-table__cell govuk-table__cell--numeric">{{ summary.head[(b, True)] }}</td>
-  <td class="govuk-table__cell govuk-table__cell--numeric">{{ summary.head[(b, False)] }}</td>
+  {% for present in [True, False] %}{% for archived, _, _ in statuses %}
+  <td class="govuk-table__cell govuk-table__cell--numeric{% if loop.first %} app-table__group{% endif %}">{{ summary.head[(b, present, archived)] }}</td>
+  {% endfor %}{% endfor %}
 </tr>
 {% endfor %}
 </tbody>
@@ -66,15 +135,25 @@
 
 <h2 class="govuk-heading-l">By type</h2>
 <table class="govuk-table app-table--auto">
-<thead class="govuk-table__head"><tr class="govuk-table__row">
+<thead class="govuk-table__head">
+<tr class="govuk-table__row">
+  <td class="govuk-table__header"></td>
+  {% for b in ['High', 'Medium', 'Low'] %}<th scope="colgroup" colspan="2" class="govuk-table__header app-table__group">{{ band_tag(b) }}</th>{% endfor %}
+  <th scope="colgroup" colspan="2" class="govuk-table__header app-table__group">Minimal / likely fake</th>
+</tr>
+<tr class="govuk-table__row">
   <th scope="col" class="govuk-table__header">Type</th>
-  {% for b in bands %}<th scope="col" class="govuk-table__header govuk-table__header--numeric">{{ b }}</th>{% endfor %}
-</tr></thead>
+  {% for _ in range(3) %}{% for _, label, _ in statuses %}<th scope="col" class="govuk-table__header govuk-table__header--numeric{% if loop.first %} app-table__group{% endif %}">{{ label }}</th>{% endfor %}{% endfor %}
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric app-table__group">Minimal</th>
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Likely fake</th>
+</tr>
+</thead>
 <tbody class="govuk-table__body">
 {% for key, label in categories.items() %}
 <tr class="govuk-table__row">
   <th scope="row" class="govuk-table__header">{{ label }}</th>
-  {% for b in bands %}<td class="govuk-table__cell govuk-table__cell--numeric">{{ summary.by_category[(label, b)] }}</td>{% endfor %}
+  {% for b in ['High', 'Medium', 'Low'] %}{% for archived, _, _ in statuses %}<td class="govuk-table__cell govuk-table__cell--numeric{% if loop.first %} app-table__group{% endif %}">{{ summary.by_category[(label, b, archived)] }}</td>{% endfor %}{% endfor %}
+  {% for b in ['Minimal', 'Likely fake'] %}<td class="govuk-table__cell govuk-table__cell--numeric{% if loop.first %} app-table__group{% endif %}">{{ summary.by_category[(label, b, False)] + summary.by_category[(label, b, True)] }}</td>{% endfor %}
 </tr>
 {% endfor %}
 </tbody>
@@ -82,13 +161,15 @@
 
 <h2 class="govuk-heading-l">Repositories with findings</h2>
 <div class="govuk-inset-text">
-  {{ summary.repos_archived_with_review }} archived repositories have findings needing review. Making them private may be the quickest mitigation.
+  {{ summary.repos_with_review[True] }} archived repositories have findings needing review. Making them private may be the quickest mitigation.
 </div>
-<p class="govuk-body"><a class="govuk-link" href="exports/by-repo.csv">Download this table as CSV</a>.
+<p class="govuk-body">Repositories are listed in priority order: most Queue A High findings first, then Queue A Medium, Queue B High, Queue A Low and Queue B Medium.
+  <a class="govuk-link" href="exports/by-repo.csv">Download this table as CSV</a>.
   You can also see findings <a class="govuk-link" href="teams.html">by team</a> and <a class="govuk-link" href="authors.html">by author</a>.</p>
-{{ filter_input('repos', 'Filter repositories') }}
+{{ filter_input('repos', 'Filter repositories', selects=[('archived', 'Repository status', [('0', 'Active'), ('1', 'Archived')])]) }}
 <table class="govuk-table app-table--compact" id="repos" data-sortable>
 <thead class="govuk-table__head"><tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Priority</th>
   <th scope="col" class="govuk-table__header">Repository</th>
   <th scope="col" class="govuk-table__header">Teams (write+)</th>
   <th scope="col" class="govuk-table__header">Archived</th>
@@ -98,7 +179,8 @@
 </tr></thead>
 <tbody class="govuk-table__body">
 {% for r in repo_rows if r.total %}
-<tr class="govuk-table__row">
+<tr class="govuk-table__row" data-archived="{{ 1 if r.archived else 0 }}">
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ r.rank }}</td>
   <td class="govuk-table__cell"><a class="govuk-link" href="repos/{{ r.slug }}.html">{{ r.name }}</a><br>
     <a class="govuk-link govuk-body-s" href="{{ r.url }}" rel="noopener noreferrer" target="_blank">GitHub<span class="govuk-visually-hidden"> repository {{ r.name }}</span></a></td>
   <td class="govuk-table__cell govuk-body-s app-muted">{{ r.teams }}</td>

@@ -72,15 +72,87 @@
 </footer>
 
 <script>
-document.querySelectorAll('input[data-filter-table]').forEach(function (input) {
-  var table = document.getElementById(input.dataset.filterTable);
-  input.addEventListener('input', function () {
-    var q = input.value.toLowerCase();
-    table.querySelectorAll('tbody tr').forEach(function (tr) {
-      tr.hidden = tr.textContent.toLowerCase().indexOf(q) === -1;
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  var applyParams = true;
+
+  document.querySelectorAll('[data-filters-for]').forEach(function (panel) {
+    var table = document.getElementById(panel.dataset.filtersFor);
+    if (!table) return;
+    var rows = Array.from(table.tBodies[0].rows);
+    var text = panel.querySelector('[data-filter-text]');
+    var selects = Array.from(panel.querySelectorAll('select[data-filter-key]'));
+    var count = panel.querySelector('[data-filter-count]');
+    var haystack = null;
+    var timer = null;
+
+    function apply() {
+      var q = text.value.trim().toLowerCase();
+      var active = selects.filter(function (s) { return s.value; })
+        .map(function (s) { return [s.dataset.filterKey, '|' + s.value + '|']; });
+      if (q && !haystack) haystack = rows.map(function (tr) { return tr.textContent.toLowerCase(); });
+      var shown = 0;
+      rows.forEach(function (tr, i) {
+        var ok = !q || haystack[i].indexOf(q) !== -1;
+        for (var j = 0; ok && j < active.length; j++) {
+          ok = ('|' + (tr.dataset[active[j][0]] || '') + '|').indexOf(active[j][1]) !== -1;
+        }
+        tr.hidden = !ok;
+        if (ok) shown++;
+      });
+      if (count) count.textContent = 'Showing ' + shown + ' of ' + rows.length;
+    }
+
+    function later() { clearTimeout(timer); timer = setTimeout(apply, 150); }
+    text.addEventListener('input', later);
+    selects.forEach(function (s) { s.addEventListener('change', apply); });
+    var clear = panel.querySelector('[data-filter-clear]');
+    if (clear) clear.addEventListener('click', function () {
+      text.value = '';
+      selects.forEach(function (s) { s.value = ''; });
+      apply();
     });
+
+    // Links like queue-a.html?band=High&archived=1 preset the first filter panel on the page
+    if (applyParams) {
+      applyParams = false;
+      selects.forEach(function (s) {
+        var v = params.get(s.dataset.filterKey);
+        if (v && Array.from(s.options).some(function (o) { return o.value === v; })) s.value = v;
+      });
+      if (params.get('q')) text.value = params.get('q');
+    }
+
+    var csvButton = panel.querySelector('[data-filter-csv]');
+    if (csvButton) csvButton.addEventListener('click', function () {
+      var data = JSON.parse(document.getElementById(csvButton.dataset.filterCsv).textContent);
+      var lines = [data.fields.map(csvCell).join(',')];
+      Array.from(table.tBodies[0].rows).forEach(function (tr) {
+        if (!tr.hidden) lines.push(data.rows[+tr.dataset.i].map(csvCell).join(','));
+      });
+      var blob = new Blob(['\ufeff' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (csvButton.dataset.filename || 'findings') + '-filtered.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    });
+
+    apply();
   });
-});
+
+  function csvCell(v) {
+    if (v === null || v === undefined) v = '';
+    else if (v === true) v = 'True';
+    else if (v === false) v = 'False';
+    v = String(v);
+    // Repo content is untrusted: stop spreadsheet apps interpreting cells as formulas (matches the Python export)
+    if (/^[=+\-@\t\r]/.test(v)) v = "'" + v;
+    return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+})();
 document.querySelectorAll('table[data-sortable] thead th').forEach(function (th) {
   var idx = th.cellIndex;
   var label = th.textContent.trim();

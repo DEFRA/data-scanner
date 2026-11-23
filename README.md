@@ -317,16 +317,19 @@ Open `reports/index.html`. The report uses [GOV.UK Design System](https://design
 
 In any table, select a column heading to sort it, and use the *Filter* box above it to narrow the rows.
 
+**Priority order:** repositories are ranked by Queue A High findings, then Queue A Medium, Queue B High, Queue A Low and Queue B Medium (priority 1 is the one to investigate first). Every list of findings is grouped by repository in that order, then by band and score within each repository. The *Priority* column shows the rank; sort by it to return to the default order after sorting by another column. The rank is also the `priority` column in every CSV export.
+
 ### Summary page
 
-- **Findings needing review:** counts per band for Queue A and Queue B. Click through to the queue pages.
+- **Findings needing review:** counts per band for Queue A and Queue B, each split into active and archived repositories, plus how many active and archived repositories have something to review. Each number opens the queue already filtered to that band and status (for example `queue-a.html?band=High&archived=1`).
+- **Repositories by band:** how many active and archived repositories have at least one finding needing review in each band, for Queue A, Queue B and either queue. A repository with findings in several bands is counted in each, and the *Any band* row counts each repository once.
 - **Sources:** how many reviewable findings came from code history, documents/images, or wikis.
 - **Changes since previous run:** new findings, and findings that have gone (usually because history was rewritten).
-- **Still exposed on the default branch vs history only:**
+- **Still exposed on the default branch vs history only**, split into active and archived repositories:
   - *Still present:* the value is in the current version of the file on the default branch, so anyone browsing the repo can see it.
   - *History only:* it has been deleted but can still be reached through the commit link and anyone's existing clone.
-- **By type:** counts per data type and band.
-- **Repositories with findings:** sortable and filterable. Shows teams with write access, archived flag, last commit date and counts per queue and band. Archived repositories with findings are counted separately because making them private is often the quickest fix. Download the table with *Download as CSV*.
+- **By type:** counts per data type for High, Medium and Low (each split active/archived), plus Minimal and Likely fake totals.
+- **Repositories with findings:** in priority order, sortable and filterable (including an *Active/Archived* filter). Shows teams with write access, archived flag, last commit date and counts per queue and band. Archived repositories with findings are counted separately because making them private is often the quickest fix. Download the table with *Download as CSV*.
 - **Documents not scanned:** spreadsheets, Word files, PDFs and images that were corrupt, password protected or over `max_document_bytes`. Each repository page lists them with a link, so you can open them by hand. Only populated for scans made since this feature was added; run `pii-scan scan --full` to fill it in for older results.
 - **Errors:** repositories that failed to download or scan.
 
@@ -334,6 +337,7 @@ In any table, select a column heading to sort it, and use the *Filter* box above
 
 | Column | Meaning |
 | --- | --- |
+| Priority | Repository rank (see *Priority order* above). Shown where findings from several repositories are listed |
 | Band, Score | See [How findings are scored](#how-findings-are-scored). A blue **new** tag means it first appeared in the latest run |
 | Repo | Repository page, with an **archived** tag if applicable and the teams with write access underneath |
 | Type | Data type, plus the tier and source (`document` for office/PDF/image files, `wiki`) |
@@ -346,7 +350,12 @@ In any table, select a column heading to sort it, and use the *Filter* box above
 | Why | Every factor behind the score |
 | Triage | Recorded decision and note, plus the start of the fingerprint used for triage |
 
-Use the filter box to search a table by repo, type, author or path, and click a column heading to sort.
+Above each table is a filter panel:
+
+- a text box that searches the repository, type, author, path and other visible text
+- drop-downs for *Band*, *Queue*, *Repository status* (active or archived), *Default branch* (still present, history only, unknown), *Type*, *Tier*, *Source*, *Team* and *New since previous run*. Each only lists values found in that table, and is hidden when there's nothing to choose between
+- a count of the rows shown, and *Clear filters*
+- **Download filtered CSV**, which saves the rows currently shown, in their current order, with the same columns as `findings.csv`. The file is built in your browser from data already in the page, so nothing is sent anywhere. Filters can also be preset with the page address, for example `queue-b.html?band=High&archived=0&teams=Flood%20Devs`.
 
 ### Teams and Authors pages
 

@@ -8,11 +8,13 @@
 @use "govuk-frontend/dist/govuk/core";
 @use "govuk-frontend/dist/govuk/objects";
 @use "govuk-frontend/dist/govuk/components/breadcrumbs";
+@use "govuk-frontend/dist/govuk/components/button";
 @use "govuk-frontend/dist/govuk/components/details";
 @use "govuk-frontend/dist/govuk/components/hint";
 @use "govuk-frontend/dist/govuk/components/input";
 @use "govuk-frontend/dist/govuk/components/inset-text";
 @use "govuk-frontend/dist/govuk/components/label";
+@use "govuk-frontend/dist/govuk/components/select";
 @use "govuk-frontend/dist/govuk/components/skip-link";
 @use "govuk-frontend/dist/govuk/components/summary-list";
 @use "govuk-frontend/dist/govuk/components/table";
@@ -315,6 +317,45 @@ $gutter: 30px;
   .govuk-input {
     max-width: 50ex;
   }
+}
+
+.app-filters {
+  margin-bottom: 20px;
+  padding: 15px 15px 0;
+  background-color: $light-grey;
+}
+
+.app-filters__selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 20px;
+}
+
+.app-filter--select .govuk-select {
+  min-width: 14ex;
+  max-width: 40ex;
+}
+
+.app-filters__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 15px;
+  padding-bottom: 15px;
+
+  .govuk-button,
+  .app-filters__count {
+    margin-bottom: 0;
+  }
+
+  .app-filters__count {
+    font-weight: 700;
+  }
+}
+
+.govuk-table .app-table__group {
+  border-left: 1px solid $mid-grey;
+  padding-left: 10px;
 }
 
 .govuk-tag.app-tag--small {

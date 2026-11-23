@@ -2,19 +2,54 @@
 
 {% macro band_tag(band) %}<strong class="govuk-tag govuk-tag--{{ band_colours.get(band, 'grey') }} app-tag--small">{{ band }}</strong>{% endmacro %}
 
-{% macro filter_input(table_id, label, hint=None) %}
-<div class="govuk-form-group app-filter">
-  <label class="govuk-label govuk-label--s" for="filter-{{ table_id }}">{{ label }}</label>
-  {% if hint %}<div id="filter-{{ table_id }}-hint" class="govuk-hint">{{ hint }}</div>{% endif %}
-  <input class="govuk-input" id="filter-{{ table_id }}" type="search" data-filter-table="{{ table_id }}" autocomplete="off" spellcheck="false"{% if hint %} aria-describedby="filter-{{ table_id }}-hint"{% endif %}>
+{% macro filter_input(table_id, label, hint=None, selects=[]) %}
+{# Text filter plus optional selects; each select matches the row attribute data-<key> ('|' separates multiple values) #}
+<div class="app-filters" data-filters-for="{{ table_id }}">
+  <div class="govuk-form-group app-filter">
+    <label class="govuk-label govuk-label--s" for="filter-{{ table_id }}">{{ label }}</label>
+    {% if hint %}<div id="filter-{{ table_id }}-hint" class="govuk-hint">{{ hint }}</div>{% endif %}
+    <input class="govuk-input" id="filter-{{ table_id }}" type="search" data-filter-text autocomplete="off" spellcheck="false"{% if hint %} aria-describedby="filter-{{ table_id }}-hint"{% endif %}>
+  </div>
+  <div class="app-filters__selects">
+  {% for key, select_label, options in selects if options|length > 1 or (key == 'new' and options) %}
+  <div class="govuk-form-group app-filter app-filter--select">
+    <label class="govuk-label govuk-label--s" for="filter-{{ table_id }}-{{ key }}">{{ select_label }}</label>
+    <select class="govuk-select" id="filter-{{ table_id }}-{{ key }}" data-filter-key="{{ key }}">
+      <option value="">All</option>
+      {% for value, text in options %}<option value="{{ value }}">{{ text }}</option>{% endfor %}
+    </select>
+  </div>
+  {% endfor %}
+  </div>
+  <div class="app-filters__actions">
+    <p class="govuk-body app-filters__count" aria-live="polite" data-filter-count></p>
+    <button type="button" class="govuk-button govuk-button--secondary" data-filter-clear>Clear filters</button>
+    {% if caller %}{{ caller() }}{% endif %}
+  </div>
 </div>
 {% endmacro %}
 
-{% macro findings_table(findings, table_id, show_repo=False) %}
+{% macro findings_table(findings, table_id, show_repo=False, csv_name='findings') %}
 {% if findings %}
-{{ filter_input(table_id, 'Filter findings', findings|length ~ ' findings. Filter by repository, type, author or path. Select a column heading to sort.') }}
+{% set opts = filter_options(findings) %}
+{% set selects = [
+  ('band', 'Band', opts.band),
+  ('queue', 'Queue', opts.queue),
+  ('archived', 'Repository status', opts.archived),
+  ('head', 'Default branch', opts.head),
+  ('category', 'Type', opts.category),
+  ('tier', 'Tier', opts.tier),
+  ('source', 'Source', opts.source),
+  ('teams', 'Team', opts.teams),
+  ('new', 'New since previous run', opts.new),
+] %}
+{% call filter_input(table_id, 'Filter findings', findings|length ~ ' findings, grouped by repository in priority order. Search by repository, type, author or path. Select a column heading to sort.', selects) %}
+    <button type="button" class="govuk-button" data-filter-csv="{{ table_id }}-data" data-filename="{{ csv_name }}">Download filtered CSV</button>
+{% endcall %}
+<script type="application/json" id="{{ table_id }}-data">{{ {'fields': export_fields, 'rows': findings|map(attribute='export')|list}|tojson }}</script>
 <table class="govuk-table app-table--compact" id="{{ table_id }}" data-sortable>
 <thead class="govuk-table__head"><tr class="govuk-table__row">
+  {% if show_repo %}<th scope="col" class="govuk-table__header govuk-table__header--numeric">Priority</th>{% endif %}
   <th scope="col" class="govuk-table__header">Band</th>
   <th scope="col" class="govuk-table__header govuk-table__header--numeric">Score</th>
   {% if show_repo %}<th scope="col" class="govuk-table__header">Repo</th>{% endif %}
@@ -30,7 +65,8 @@
 </tr></thead>
 <tbody class="govuk-table__body">
 {% for f in findings %}
-<tr class="govuk-table__row">
+<tr class="govuk-table__row" data-i="{{ loop.index0 }}" data-band="{{ f.band }}" data-queue="{{ f.queue }}" data-archived="{{ 1 if f.archived else 0 }}" data-head="{{ head_state(f) }}" data-category="{{ f.category }}" data-tier="{{ f.tier }}" data-source="{{ f.source }}" data-teams="{{ f.team_list|map(attribute='team_name')|join('|') }}" data-new="{{ 1 if f.is_new else 0 }}">
+  {% if show_repo %}<td class="govuk-table__cell govuk-table__cell--numeric" data-sort="{{ loop.index0 }}">{{ f.priority }}</td>{% endif %}
   <td class="govuk-table__cell" data-sort="{{ bands.index(f.band) }}">{{ band_tag(f.band) }}
     {% if f.is_new %}<br><strong class="govuk-tag app-tag--small">New</strong>{% endif %}</td>
   <td class="govuk-table__cell govuk-table__cell--numeric">{{ '%.1f'|format(f.score) }}</td>

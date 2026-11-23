@@ -21,8 +21,8 @@
   {% for r in group.repos %}<a class="govuk-link" href="{{ root }}repos/{{ repo_slug(findings[0].org, r) }}.html">{{ r }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
 
 <h2 class="govuk-heading-l">Queue A: production code, data files and wikis</h2>
-{{ findings_table(findings|selectattr('queue', 'equalto', 'A')|list, 'qa', show_repo=True) }}
+{{ findings_table(findings|selectattr('queue', 'equalto', 'A')|list, 'qa', show_repo=True, csv_name=group.slug ~ '-queue-a') }}
 
 <h2 class="govuk-heading-l">Queue B: tests, fixtures and docs</h2>
-{{ findings_table(findings|selectattr('queue', 'equalto', 'B')|list, 'qb', show_repo=True) }}
+{{ findings_table(findings|selectattr('queue', 'equalto', 'B')|list, 'qb', show_repo=True, csv_name=group.slug ~ '-queue-b') }}
 {% endblock %}

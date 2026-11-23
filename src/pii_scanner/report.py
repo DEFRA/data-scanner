@@ -19,7 +19,7 @@ HIDDEN_TRIAGE = ("false_positive", "fake", "accepted", "remediated")
 REVIEW_BANDS = ("High", "Medium", "Low")
 NO_TEAM = "(no team with write access)"
 EXPORT_FIELDS = (
-    "fingerprint", "band", "score", "queue", "tier", "org", "repo", "repo_url", "archived", "last_commit_at",
+    "priority", "fingerprint", "band", "score", "queue", "tier", "org", "repo", "repo_url", "archived", "last_commit_at",
     "teams", "source", "category", "masked", "path", "line", "location", "file_url", "commit_sha", "commit_url",
     "author_name", "author_email", "github_login", "author_date", "in_head", "occurrences", "reasons",
     "triage_status", "triage_note", "is_new",
@@ -81,7 +81,6 @@ def _load(store: Store) -> tuple[list[dict], dict]:
         f["teams"] = ", ".join(t["team_name"] for t in f["team_list"])
         f["author_key"], f["author_label"] = _author(f)
         findings.append(f)
-    findings.sort(key=lambda f: (BAND_ORDER.index(f["band"]), -f["score"], f["org"], f["repo"], f["path"]))
     resolved = 0
     if len(runs) == 2:
         current = {f["fingerprint"] for f in findings}
@@ -99,7 +98,8 @@ def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    env.globals.update(repo_slug=repo_slug, bands=BAND_ORDER, categories=CATEGORIES)
+    env.globals.update(repo_slug=repo_slug, bands=BAND_ORDER, categories=CATEGORIES, export_fields=EXPORT_FIELDS,
+                       filter_options=filter_options, head_state=head_state)
     env.filters["org_name"] = org_name
 
     if out_dir.exists():
@@ -108,8 +108,7 @@ def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
         (out_dir / sub).mkdir(parents=True, exist_ok=True)
     shutil.copytree(STATIC_DIR, out_dir / "assets")
 
-    visible = [f for f in findings if not f["hidden"]]
-    review = [f for f in visible if f["band"] in REVIEW_BANDS]
+    findings.sort(key=lambda f: (BAND_ORDER.index(f["band"]), -f["score"], f["path"], f["line"] or 0))
     by_repo: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for f in findings:
         by_repo[(f["org"], f["repo"])].append(f)
@@ -132,6 +131,17 @@ def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
                           "risk": (counts[("A", "High")], counts[("A", "Medium")], counts[("B", "High")],
                                    counts[("A", "Low")], counts[("B", "Medium")])})
     repo_rows.sort(key=lambda r: r["risk"], reverse=True)
+    # Priority: 1 is the repository to investigate first. Every finding list is grouped by repo in this order.
+    for i, r in enumerate(repo_rows, 1):
+        r["rank"] = i
+    rank = {(r["org"], r["name"]): r["rank"] for r in repo_rows}
+    for f in findings:
+        f["priority"] = rank.get((f["org"], f["repo"]), len(rank) + 1)
+        f["export"] = list(_finding_row(f).values())
+    # Stable sort, so band and score order is kept within each repo; org/repo keeps unranked (out of inventory) repos together
+    findings.sort(key=lambda f: (f["priority"], f["org"], f["repo"]))
+    visible = [f for f in findings if not f["hidden"]]
+    review = [f for f in visible if f["band"] in REVIEW_BANDS]
     team_rows, team_findings = _group(visible, lambda f: [(t["team_slug"], t["team_name"]) for t in f["team_list"]]
                                       or [("_no-team", NO_TEAM)])
     author_rows, author_findings = _group(visible, lambda f: [(f["author_key"], f["author_label"])])
@@ -140,12 +150,18 @@ def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
         "orgs": orgs,
         "repos_total": len(repos),
         "repos_with_findings": sum(1 for r in repo_rows if r["total"]),
-        "repos_archived_with_review": sum(
-            1 for r in repo_rows if r["archived"] and any(r["counts"][(q, b)] for q in "AB" for b in REVIEW_BANDS)),
+        "repos_with_review": Counter(
+            bool(r["archived"]) for r in repo_rows if any(r["counts"][(q, b)] for q in "AB" for b in REVIEW_BANDS)),
+        # Repos with at least one reviewable finding of each band, per queue ("any" = either queue or any band)
+        "repos_by_band": Counter(
+            (q, b, bool(r["archived"])) for r in repo_rows for q in ("A", "B", "any") for b in (*REVIEW_BANDS, "any")
+            if any(r["counts"][(qq, bb)] for qq in ("AB" if q == "any" else q)
+                   for bb in (REVIEW_BANDS if b == "any" else (b,)))),
         "scan_errors": [r for r in repos if r["scan_error"] or r["fetch_error"]],
-        "band_queue": Counter((f["queue"], f["band"]) for f in visible),
-        "by_category": Counter((f["category"], f["band"]) for f in visible),
-        "head": Counter((f["band"], bool(f["in_head"])) for f in review),
+        # Keyed by archived flag as well, so the summary can split active and archived repositories
+        "band_queue": Counter((f["queue"], f["band"], bool(f["archived"])) for f in visible),
+        "by_category": Counter((f["category"], f["band"], bool(f["archived"])) for f in visible),
+        "head": Counter((f["band"], bool(f["in_head"]), bool(f["archived"])) for f in review),
         "new": Counter(f["band"] for f in visible if f["is_new"]),
         "triaged": Counter(f["triage_status"] for f in findings if f["triage_status"]),
         "sources": Counter(f["source"] for f in review),
@@ -238,8 +254,36 @@ def _write_csv(path: Path, fields, rows) -> None:
         w.writerows({k: _csv_safe(v) for k, v in row.items()} for row in rows)
 
 
+def _finding_row(f: dict) -> dict:
+    return {k: f.get(k) for k in EXPORT_FIELDS} | {"reasons": "; ".join(f["reasons"])}
+
+
 def _finding_rows(findings: list[dict]) -> list[dict]:
-    return [{k: f.get(k) for k in EXPORT_FIELDS} | {"reasons": "; ".join(f["reasons"])} for f in findings]
+    return [_finding_row(f) for f in findings]
+
+
+def filter_options(findings: list[dict]) -> dict[str, list[tuple[str, str]]]:
+    """(value, label) choices for each finding filter, limited to values present in this table."""
+    def present(key, label=str, order=None):
+        values = {f[key] for f in findings}
+        return [(str(v), label(v)) for v in (sorted(values, key=order) if order else sorted(values))]
+    return {
+        "band": present("band", order=BAND_ORDER.index),
+        "queue": present("queue", lambda v: {"A": "A: production, data, wikis", "B": "B: tests, docs"}[v]),
+        "archived": [(v, label) for v, label in (("0", "Active"), ("1", "Archived"))
+                     if any(str(int(bool(f["archived"]))) == v for f in findings)],
+        "head": [(v, label) for v, label in (("present", "Still present"), ("history", "History only"),
+                                             ("unknown", "Unknown")) if any(head_state(f) == v for f in findings)],
+        "category": present("category"),
+        "tier": present("tier"),
+        "source": present("source"),
+        "teams": sorted({(t["team_name"], t["team_name"]) for f in findings for t in f["team_list"]}),
+        "new": [("1", "New only")] if any(f["is_new"] for f in findings) else [],
+    }
+
+
+def head_state(f: dict) -> str:
+    return "present" if f["in_head"] else "history" if f["in_head"] == 0 else "unknown"
 
 
 def _export(findings: list[dict], out_dir: Path) -> None:

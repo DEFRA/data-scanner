@@ -3,5 +3,5 @@
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 <h1 class="govuk-heading-xl">{{ title }}</h1>
-{{ findings_table(findings, 'findings', show_repo=show_repo) }}
+{{ findings_table(findings, 'findings', show_repo=show_repo, csv_name=nav) }}
 {% endblock %}

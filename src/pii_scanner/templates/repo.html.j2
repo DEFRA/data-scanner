@@ -41,22 +41,23 @@
 </dl>
 
 {% set visible = findings|rejectattr('hidden')|list %}
+{% set slug = repo_slug(repo.org, repo.name) %}
 <h2 class="govuk-heading-l">Queue A: production code, data files and wikis</h2>
-{{ findings_table(visible|selectattr('queue', 'equalto', 'A')|selectattr('band', 'in', ['High', 'Medium', 'Low'])|list, 'qa') }}
+{{ findings_table(visible|selectattr('queue', 'equalto', 'A')|selectattr('band', 'in', ['High', 'Medium', 'Low'])|list, 'qa', csv_name=slug ~ '-queue-a') }}
 
 <h2 class="govuk-heading-l">Queue B: tests, fixtures and docs</h2>
-{{ findings_table(visible|selectattr('queue', 'equalto', 'B')|selectattr('band', 'in', ['High', 'Medium', 'Low'])|list, 'qb') }}
+{{ findings_table(visible|selectattr('queue', 'equalto', 'B')|selectattr('band', 'in', ['High', 'Medium', 'Low'])|list, 'qb', csv_name=slug ~ '-queue-b') }}
 
 <h2 class="govuk-heading-l">Minimal risk and likely fake</h2>
 <details class="govuk-details">
   <summary class="govuk-details__summary"><span class="govuk-details__summary-text">Show {{ visible|selectattr('band', 'in', ['Minimal', 'Likely fake'])|list|length }} findings</span></summary>
   <div class="govuk-details__text">
-{{ findings_table(visible|selectattr('band', 'in', ['Minimal', 'Likely fake'])|list, 'qf') }}
+{{ findings_table(visible|selectattr('band', 'in', ['Minimal', 'Likely fake'])|list, 'qf', csv_name=slug ~ '-minimal-fake') }}
   </div>
 </details>
 
 <h2 class="govuk-heading-l">Triaged</h2>
-{{ findings_table(findings|selectattr('hidden')|list, 'qt') }}
+{{ findings_table(findings|selectattr('hidden')|list, 'qt', csv_name=slug ~ '-triaged') }}
 
 {% if skipped %}
 <h2 class="govuk-heading-l">Documents not scanned ({{ skipped|length }})</h2>

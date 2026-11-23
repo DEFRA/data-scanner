@@ -233,7 +233,51 @@ def test_store_and_report_do_not_leak_raw_values(repo, tmp_path):
     store.close()
 
 
-def test_ner_finds_names_in_data_files(repo, tmp_path):
+def test_report_splits_archived_and_orders_by_repo_priority(repo, tmp_path):
+    res = scan_repo(make_task(repo["path"], tmp_path))
+    store = Store(tmp_path / "db.sqlite")
+    store.upsert_inventory("TESTORG", [
+        {"name": "demo", "html_url": "https://github.com/TESTORG/demo", "archived": True, "fork": False,
+         "default_branch": "main"},
+        {"name": "live", "html_url": "https://github.com/TESTORG/live", "archived": False, "fork": False,
+         "default_branch": "main"},
+    ])
+    run_id = store.start_run("full")
+    for s in res["sources"]:
+        store.save_repo_findings(run_id, "TESTORG", "demo", s.source, s.findings, s.full)
+        # "live" gets only the code findings, so it has fewer and ranks below "demo"
+        if s.source == "code":
+            store.save_repo_findings(run_id, "TESTORG", "live", s.source,
+                                     [{**f, "repo": "live", "fingerprint": "live-" + f["fingerprint"]}
+                                      for f in s.findings], s.full)
+    store.finish_run(run_id, 2, 0)
+    reports = tmp_path / "reports"
+    build_report(store, reports, ["TESTORG"])
+    store.close()
+
+    index = (reports / "index.html").read_text()
+    assert "1 active and 1 archived repositories have findings needing review" in index
+    assert "Repositories by band" in index
+    assert "2 with findings,\n  of which 2 (1 active, 1 archived) need review." in index
+    assert 'href="queue-a.html?band=High&amp;archived=1"' in index
+
+    import csv
+    rows = list(csv.DictReader(open(reports / "findings.csv", encoding="utf-8")))
+    assert {r["repo"]: r["priority"] for r in rows} == {"demo": "1", "live": "2"}
+
+    for page in ("queue-a.html", "queue-b.html"):
+        html = (reports / page).read_text()
+        order = re.findall(r'href="repos/TESTORG__(\w+)\.html"', html)
+        if order:
+            # Grouped by repository, highest priority first
+            assert order == sorted(order, key=["demo", "live"].index), page
+        if 'data-archived="0"' in html:
+            assert 'data-archived="1"' in html and 'data-filter-key="archived"' in html
+        data = re.search(r'<script type="application/json" id="findings-data">(.*?)</script>', html, re.S)
+        if data:
+            payload = json.loads(data.group(1))
+            assert payload["fields"][0] == "priority"
+            assert len(payload["rows"]) == html.count('<tr class="govuk-table__row" data-i=')
     spacy = pytest.importorskip("spacy")
     cfg = load_config(ROOT / "config.toml")
     if not spacy.util.is_package(cfg.ner_model):
