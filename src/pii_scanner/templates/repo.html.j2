@@ -1,0 +1,81 @@
+{% extends "base.html.j2" %}
+{% from "_macros.html.j2" import findings_table with context %}
+{% block title %}{{ repo.name }}{% endblock %}
+{% block before_content %}
+<nav class="govuk-breadcrumbs" aria-label="Breadcrumb">
+  <ol class="govuk-breadcrumbs__list">
+    <li class="govuk-breadcrumbs__list-item"><a class="govuk-breadcrumbs__link" href="{{ root }}index.html">Summary</a></li>
+    <li class="govuk-breadcrumbs__list-item"><a class="govuk-breadcrumbs__link" href="{{ root }}index.html#repos">Repositories</a></li>
+  </ol>
+</nav>
+{% endblock %}
+{% block content %}
+<span class="govuk-caption-l">{{ repo.org|org_name }}</span>
+<h1 class="govuk-heading-xl">{{ repo.name }}</h1>
+<dl class="govuk-summary-list">
+  {% set rows = [
+    ('Repository', None),
+    ('Archived', 'Yes' if repo.archived else 'No'),
+    ('Last commit (default branch)', repo.last_commit_at or 'Unknown'),
+    ('Last push (any branch)', repo.pushed_at or 'Unknown'),
+    ('Default branch', repo.default_branch or 'Unknown'),
+    ('Wiki scanned', 'Yes' if repo.wiki_fetched else 'No'),
+    ('Teams with write access', repo.teams or 'None recorded'),
+  ] %}
+  {% for key, value in rows %}
+  <div class="govuk-summary-list__row">
+    <dt class="govuk-summary-list__key">{{ key }}</dt>
+    <dd class="govuk-summary-list__value">{% if key == 'Repository' %}{% if repo.url %}<a class="govuk-link" href="{{ repo.url }}" rel="noopener noreferrer" target="_blank">{{ repo.url }}</a>{% else %}{{ repo.org }}/{{ repo.name }}{% endif %}{% else %}{{ value }}{% endif %}</dd>
+  </div>
+  {% endfor %}
+  <div class="govuk-summary-list__row">
+    <dt class="govuk-summary-list__key">Export</dt>
+    <dd class="govuk-summary-list__value"><a class="govuk-link" href="{{ root }}exports/repos/{{ repo_slug(repo.org, repo.name) }}.csv">Reviewable findings as CSV</a></dd>
+  </div>
+  {% if repo.scan_error or repo.fetch_error %}
+  <div class="govuk-summary-list__row">
+    <dt class="govuk-summary-list__key">Errors</dt>
+    <dd class="govuk-summary-list__value"><code>{{ repo.fetch_error or '' }} {{ repo.scan_error or '' }}</code></dd>
+  </div>
+  {% endif %}
+</dl>
+
+{% set visible = findings|rejectattr('hidden')|list %}
+<h2 class="govuk-heading-l">Queue A: production code, data files and wikis</h2>
+{{ findings_table(visible|selectattr('queue', 'equalto', 'A')|selectattr('band', 'in', ['High', 'Medium', 'Low'])|list, 'qa') }}
+
+<h2 class="govuk-heading-l">Queue B: tests, fixtures and docs</h2>
+{{ findings_table(visible|selectattr('queue', 'equalto', 'B')|selectattr('band', 'in', ['High', 'Medium', 'Low'])|list, 'qb') }}
+
+<h2 class="govuk-heading-l">Minimal risk and likely fake</h2>
+<details class="govuk-details">
+  <summary class="govuk-details__summary"><span class="govuk-details__summary-text">Show {{ visible|selectattr('band', 'in', ['Minimal', 'Likely fake'])|list|length }} findings</span></summary>
+  <div class="govuk-details__text">
+{{ findings_table(visible|selectattr('band', 'in', ['Minimal', 'Likely fake'])|list, 'qf') }}
+  </div>
+</details>
+
+<h2 class="govuk-heading-l">Triaged</h2>
+{{ findings_table(findings|selectattr('hidden')|list, 'qt') }}
+
+{% if skipped %}
+<h2 class="govuk-heading-l">Documents not scanned ({{ skipped|length }})</h2>
+<div class="govuk-inset-text">These files exist in history but could not be searched. Open them manually if they may contain personal data.</div>
+<table class="govuk-table app-table--compact">
+<thead class="govuk-table__head"><tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header">File</th>
+  <th scope="col" class="govuk-table__header">Reason</th>
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Size (KB)</th>
+</tr></thead>
+<tbody class="govuk-table__body">
+{% for d in skipped %}
+<tr class="govuk-table__row">
+  <td class="govuk-table__cell">{% if d.url %}<a class="govuk-link" href="{{ d.url }}" rel="noopener noreferrer" target="_blank"><code>{{ d.path }}</code></a>{% else %}<code>{{ d.path }}</code>{% endif %}</td>
+  <td class="govuk-table__cell">{{ d.reason }}</td>
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ ((d.size or 0) / 1024)|round|int }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+{% endblock %}

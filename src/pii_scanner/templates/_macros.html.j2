@@ -1,0 +1,66 @@
+{% set band_colours = {'High': 'red', 'Medium': 'orange', 'Low': 'yellow', 'Minimal': 'grey', 'Likely fake': 'green'} %}
+
+{% macro band_tag(band) %}<strong class="govuk-tag govuk-tag--{{ band_colours.get(band, 'grey') }} app-tag--small">{{ band }}</strong>{% endmacro %}
+
+{% macro filter_input(table_id, label, hint=None) %}
+<div class="govuk-form-group app-filter">
+  <label class="govuk-label govuk-label--s" for="filter-{{ table_id }}">{{ label }}</label>
+  {% if hint %}<div id="filter-{{ table_id }}-hint" class="govuk-hint">{{ hint }}</div>{% endif %}
+  <input class="govuk-input" id="filter-{{ table_id }}" type="search" data-filter-table="{{ table_id }}" autocomplete="off" spellcheck="false"{% if hint %} aria-describedby="filter-{{ table_id }}-hint"{% endif %}>
+</div>
+{% endmacro %}
+
+{% macro findings_table(findings, table_id, show_repo=False) %}
+{% if findings %}
+{{ filter_input(table_id, 'Filter findings', findings|length ~ ' findings. Filter by repository, type, author or path. Select a column heading to sort.') }}
+<table class="govuk-table app-table--compact" id="{{ table_id }}" data-sortable>
+<thead class="govuk-table__head"><tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header">Band</th>
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Score</th>
+  {% if show_repo %}<th scope="col" class="govuk-table__header">Repo</th>{% endif %}
+  <th scope="col" class="govuk-table__header">Type</th>
+  <th scope="col" class="govuk-table__header">Value (masked)</th>
+  <th scope="col" class="govuk-table__header">File</th>
+  <th scope="col" class="govuk-table__header">Introduced</th>
+  <th scope="col" class="govuk-table__header">Author</th>
+  <th scope="col" class="govuk-table__header">Default branch</th>
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Seen</th>
+  <th scope="col" class="govuk-table__header">Why</th>
+  <th scope="col" class="govuk-table__header">Triage</th>
+</tr></thead>
+<tbody class="govuk-table__body">
+{% for f in findings %}
+<tr class="govuk-table__row">
+  <td class="govuk-table__cell" data-sort="{{ bands.index(f.band) }}">{{ band_tag(f.band) }}
+    {% if f.is_new %}<br><strong class="govuk-tag app-tag--small">New</strong>{% endif %}</td>
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ '%.1f'|format(f.score) }}</td>
+  {% if show_repo %}
+  <td class="govuk-table__cell"><a class="govuk-link" href="{{ root }}repos/{{ repo_slug(f.org, f.repo) }}.html">{{ f.repo }}</a>
+    {% if f.archived %}<br><strong class="govuk-tag govuk-tag--grey app-tag--small">Archived</strong>{% endif %}
+    {% if f.teams %}<br><span class="govuk-body-s app-muted">{{ f.teams }}</span>{% endif %}</td>
+  {% endif %}
+  <td class="govuk-table__cell">{{ f.category }}<br><span class="govuk-body-s app-muted">{{ f.tier }}{% if f.source != 'code' %}, {{ f.source }}{% endif %}</span></td>
+  <td class="govuk-table__cell"><code>{{ f.masked }}</code></td>
+  <td class="govuk-table__cell"><a class="govuk-link" href="{{ f.file_url }}" rel="noopener noreferrer" target="_blank"><code>{{ f.path }}</code></a>
+    {% if f.line %}<br><span class="govuk-body-s app-muted">line {{ f.line }}</span>{% endif %}
+    {% if f.location %}<br><span class="govuk-body-s app-muted">{{ f.location }}</span>{% endif %}</td>
+  <td class="govuk-table__cell" data-sort="{{ f.author_date }}"><a class="govuk-link" href="{{ f.commit_url }}" rel="noopener noreferrer" target="_blank"><code>{{ f.commit_sha[:10] }}</code></a><br>
+    <span class="govuk-body-s app-muted">{{ (f.author_date or '')[:10] }}</span></td>
+  <td class="govuk-table__cell">{{ f.author_name }}
+    {% if f.github_login %}<br><a class="govuk-link" href="https://github.com/{{ f.github_login }}" rel="noopener noreferrer" target="_blank">@{{ f.github_login }}</a>{% endif %}</td>
+  <td class="govuk-table__cell">{% if f.in_head %}<strong>Still present</strong>{% elif f.in_head == 0 %}History only{% else %}Unknown{% endif %}</td>
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ f.occurrences }}</td>
+  <td class="govuk-table__cell"><details class="govuk-details">
+    <summary class="govuk-details__summary"><span class="govuk-details__summary-text">{{ f.reasons|length }} factors</span></summary>
+    <div class="govuk-details__text"><ul class="govuk-list govuk-list--bullet govuk-body-s">
+    {% for r in f.reasons %}<li>{{ r }}</li>{% endfor %}</ul></div></details></td>
+  <td class="govuk-table__cell">{% if f.triage_status %}<strong class="govuk-tag govuk-tag--grey app-tag--small">{{ f.triage_status }}</strong>{% if f.triage_note %}<br><span class="govuk-body-s app-muted">{{ f.triage_note }}</span>{% endif %}<br>{% endif %}
+    <span class="govuk-body-s app-muted"><code>{{ f.fingerprint[:12] }}</code></span></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="govuk-body">None.</p>
+{% endif %}
+{% endmacro %}

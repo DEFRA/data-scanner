@@ -1,0 +1,140 @@
+{% extends "base.html.j2" %}
+{% from "_macros.html.j2" import band_tag, filter_input with context %}
+{% block title %}Summary{% endblock %}
+{% block content %}
+{% set run = meta.runs[0] if meta.runs else None %}
+<span class="govuk-caption-l">Personal data scan</span>
+<h1 class="govuk-heading-xl">{{ summary.orgs|map('org_name')|join(', ') }} public repositories</h1>
+<p class="govuk-body-l">
+  {{ summary.repos_total }} public repositories in inventory, {{ summary.repos_with_findings }} with findings.
+</p>
+<p class="govuk-body app-muted">
+  {% if run %}Run {{ run.id }} started {{ run.started_at }}, finished {{ run.finished_at }} ({{ run.mode }}).
+  {{ run.repos_scanned }} repositories scanned this run.{% else %}No completed scan run yet.{% endif %}
+</p>
+
+<h2 class="govuk-heading-l">Findings needing review</h2>
+{% for q, label, page in [('A', 'Queue A: production code, data files and wikis', 'queue-a.html'), ('B', 'Queue B: tests, fixtures and docs', 'queue-b.html')] %}
+<h3 class="govuk-heading-m"><a class="govuk-link" href="{{ page }}">{{ label }}</a></h3>
+<div class="app-stats">
+  {% for b in ['High', 'Medium', 'Low'] %}
+  <div class="app-stat">
+    <span class="app-stat__label">{{ band_tag(b) }}</span>
+    <span class="app-stat__value"><a class="govuk-link govuk-link--no-visited-state" href="{{ page }}">{{ summary.band_queue[(q, b)] }}</a></span>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+<p class="govuk-body">
+  Minimal risk: {{ summary.band_queue[('A', 'Minimal')] + summary.band_queue[('B', 'Minimal')] }}.
+  Likely fake (known test or reserved values): {{ summary.band_queue[('A', 'Likely fake')] + summary.band_queue[('B', 'Likely fake')] }}.
+  These are listed on each repository page.
+</p>
+<p class="govuk-body app-muted">
+  Sources of reviewable findings: {% for s, n in summary.sources.items() %}{{ s }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}.
+</p>
+
+<h2 class="govuk-heading-l">Changes since previous run</h2>
+{% if meta.has_previous %}
+<p class="govuk-body"><a class="govuk-link" href="new.html">{{ summary.new.values()|sum }} new findings</a>
+  ({% for b in bands %}{{ b }} {{ summary.new[b] }}{% if not loop.last %}, {% endif %}{% endfor %}).
+  {{ meta.resolved }} findings from the previous run are no longer present (history rewritten or detection changed).</p>
+{% else %}
+<p class="govuk-body">This is the first completed run, so there is nothing to compare against.</p>
+{% endif %}
+
+<h2 class="govuk-heading-l">Still exposed on the default branch vs history only</h2>
+<table class="govuk-table app-table--auto">
+<thead class="govuk-table__head"><tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header">Band</th>
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Still present on default branch</th>
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">History only</th>
+</tr></thead>
+<tbody class="govuk-table__body">
+{% for b in ['High', 'Medium', 'Low'] %}
+<tr class="govuk-table__row">
+  <th scope="row" class="govuk-table__header">{{ band_tag(b) }}</th>
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ summary.head[(b, True)] }}</td>
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ summary.head[(b, False)] }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+<div class="govuk-inset-text">
+  History-only findings are still publicly visible through commit links. Removing them needs a history rewrite and GitHub Support to purge cached views.
+</div>
+
+<h2 class="govuk-heading-l">By type</h2>
+<table class="govuk-table app-table--auto">
+<thead class="govuk-table__head"><tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header">Type</th>
+  {% for b in bands %}<th scope="col" class="govuk-table__header govuk-table__header--numeric">{{ b }}</th>{% endfor %}
+</tr></thead>
+<tbody class="govuk-table__body">
+{% for key, label in categories.items() %}
+<tr class="govuk-table__row">
+  <th scope="row" class="govuk-table__header">{{ label }}</th>
+  {% for b in bands %}<td class="govuk-table__cell govuk-table__cell--numeric">{{ summary.by_category[(label, b)] }}</td>{% endfor %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+<h2 class="govuk-heading-l">Repositories with findings</h2>
+<div class="govuk-inset-text">
+  {{ summary.repos_archived_with_review }} archived repositories have findings needing review. Making them private may be the quickest mitigation.
+</div>
+<p class="govuk-body"><a class="govuk-link" href="exports/by-repo.csv">Download this table as CSV</a>.
+  You can also see findings <a class="govuk-link" href="teams.html">by team</a> and <a class="govuk-link" href="authors.html">by author</a>.</p>
+{{ filter_input('repos', 'Filter repositories') }}
+<table class="govuk-table app-table--compact" id="repos" data-sortable>
+<thead class="govuk-table__head"><tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header">Repository</th>
+  <th scope="col" class="govuk-table__header">Teams (write+)</th>
+  <th scope="col" class="govuk-table__header">Archived</th>
+  <th scope="col" class="govuk-table__header">Last commit</th>
+  {% for q in ['A', 'B'] %}{% for b in ['High', 'Medium', 'Low'] %}<th scope="col" class="govuk-table__header govuk-table__header--numeric">{{ q }} {{ b }}</th>{% endfor %}{% endfor %}
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">All findings</th>
+</tr></thead>
+<tbody class="govuk-table__body">
+{% for r in repo_rows if r.total %}
+<tr class="govuk-table__row">
+  <td class="govuk-table__cell"><a class="govuk-link" href="repos/{{ r.slug }}.html">{{ r.name }}</a><br>
+    <a class="govuk-link govuk-body-s" href="{{ r.url }}" rel="noopener noreferrer" target="_blank">GitHub<span class="govuk-visually-hidden"> repository {{ r.name }}</span></a></td>
+  <td class="govuk-table__cell govuk-body-s app-muted">{{ r.teams }}</td>
+  <td class="govuk-table__cell">{{ 'Yes' if r.archived else 'No' }}</td>
+  <td class="govuk-table__cell" data-sort="{{ r.last_commit_at or '' }}">{{ (r.last_commit_at or '')[:10] }}</td>
+  {% for q in ['A', 'B'] %}{% for b in ['High', 'Medium', 'Low'] %}<td class="govuk-table__cell govuk-table__cell--numeric">{{ r.counts[(q, b)] }}</td>{% endfor %}{% endfor %}
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ r.total }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+{% if summary.skipped_repos %}
+<h2 class="govuk-heading-l">Documents not scanned</h2>
+<p class="govuk-body">{% for reason, n in summary.skipped_reasons.items() %}{{ n }} {{ reason }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+<p class="govuk-hint">Spreadsheets, Word files, PDFs or images that were corrupt, encrypted or larger than the size limit, so they were not searched.</p>
+<details class="govuk-details">
+  <summary class="govuk-details__summary"><span class="govuk-details__summary-text">{{ summary.skipped_repos|length }} repositories</span></summary>
+  <div class="govuk-details__text">
+    <ul class="govuk-list">
+    {% for r in summary.skipped_repos %}<li><a class="govuk-link" href="repos/{{ r.slug }}.html">{{ r.name }}</a> ({{ r.count }})</li>{% endfor %}
+    </ul>
+  </div>
+</details>
+{% endif %}
+
+{% if summary.scan_errors %}
+<h2 class="govuk-heading-l">Repositories with fetch or scan errors ({{ summary.scan_errors|length }})</h2>
+<ul class="govuk-list govuk-list--bullet">
+{% for r in summary.scan_errors %}<li>{{ r.name }}: <code>{{ (r.fetch_error or r.scan_error or '')[:300] }}</code></li>{% endfor %}
+</ul>
+{% endif %}
+
+{% if summary.triaged %}
+<h2 class="govuk-heading-l">Triage decisions</h2>
+<p class="govuk-body">{% for s, n in summary.triaged.items() %}{{ s }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}.
+  <a class="govuk-link" href="triaged.html">View triaged findings</a>.</p>
+{% endif %}
+{% endblock %}

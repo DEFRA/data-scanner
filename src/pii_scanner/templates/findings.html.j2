@@ -1,0 +1,7 @@
+{% extends "base.html.j2" %}
+{% from "_macros.html.j2" import findings_table with context %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1 class="govuk-heading-xl">{{ title }}</h1>
+{{ findings_table(findings, 'findings', show_repo=show_repo) }}
+{% endblock %}

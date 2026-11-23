@@ -1,0 +1,32 @@
+{% extends "base.html.j2" %}
+{% from "_macros.html.j2" import filter_input with context %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1 class="govuk-heading-xl">{{ title }}</h1>
+<p class="govuk-body">{{ intro }}</p>
+<div class="govuk-inset-text">Only High, Medium and Low findings that have not been triaged away are counted.</div>
+<p class="govuk-body"><a class="govuk-link" href="{{ csv }}">Download this table as CSV</a>.</p>
+{{ filter_input('groups', 'Filter ' ~ ('teams' if kind == 'teams' else 'authors')) }}
+<table class="govuk-table app-table--compact" id="groups" data-sortable>
+<thead class="govuk-table__head"><tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header">{{ 'Team' if kind == 'teams' else 'Author' }}</th>
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Repositories</th>
+  <th scope="col" class="govuk-table__header">Top types</th>
+  {% for q in ['A', 'B'] %}{% for b in ['High', 'Medium', 'Low'] %}<th scope="col" class="govuk-table__header govuk-table__header--numeric">{{ q }} {{ b }}</th>{% endfor %}{% endfor %}
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Total</th>
+  <th scope="col" class="govuk-table__header">CSV</th>
+</tr></thead>
+<tbody class="govuk-table__body">
+{% for g in rows %}
+<tr class="govuk-table__row">
+  <td class="govuk-table__cell"><a class="govuk-link" href="{{ kind }}/{{ g.slug }}.html">{{ g.label }}</a></td>
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ g.repos|length }}</td>
+  <td class="govuk-table__cell">{{ g.categories }}</td>
+  {% for q in ['A', 'B'] %}{% for b in ['High', 'Medium', 'Low'] %}<td class="govuk-table__cell govuk-table__cell--numeric">{{ g.counts[(q, b)] }}</td>{% endfor %}{% endfor %}
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ g.total }}</td>
+  <td class="govuk-table__cell"><a class="govuk-link" href="exports/{{ kind }}/{{ g.slug }}.csv">CSV<span class="govuk-visually-hidden"> for {{ g.label }}</span></a></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

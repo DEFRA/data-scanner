@@ -1,0 +1,9 @@
+# Scan output contains (masked) personal data references and a local HMAC key: never commit
+/data/
+/reports/
+triage*.csv
+
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/

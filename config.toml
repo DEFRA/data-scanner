@@ -1,0 +1,124 @@
+[github]
+orgs = ["DEFRA"]
+include_forks = false
+# Repo names (without org) to skip entirely
+exclude_repos = []
+
+[paths]
+data_dir = "data"
+reports_dir = "reports"
+
+[fetch]
+workers = 8
+include_wikis = true
+
+[scan]
+workers = 4
+# Per repo memory growth allowed in a worker, in MB. A repo that exceeds it is recorded as an error and retried next run.
+# 0 sizes it from available RAM (80% shared across workers, at least 768).
+max_memory_mb = 0
+# Lines longer than this are treated as minified/generated and skipped
+max_line_length = 4000
+# Text files bigger than this (datasets, dumps) are not diffed through history. Instead each distinct
+# version is sampled from its first large_file_sample_lines lines.
+large_file_bytes = 2_000_000
+large_file_sample_lines = 5000
+include_documents = true
+max_document_bytes = 20_000_000
+# Git pathspec globs excluded from history scanning (lockfiles, vendored and generated code)
+exclude_globs = [
+  "**/package-lock.json", "**/npm-shrinkwrap.json", "**/yarn.lock", "**/pnpm-lock.yaml",
+  "**/poetry.lock", "**/Pipfile.lock", "**/composer.lock", "**/Gemfile.lock", "**/go.sum",
+  "**/Cargo.lock", "**/*.lock",
+  "**/*.min.js", "**/*.min.css", "**/*.map", "**/*.svg",
+  "**/node_modules/**", "**/vendor/**", "**/bower_components/**", "**/dist/**",
+  "**/.yarn/**",
+]
+
+[ner]
+# off | targeted (data-like files + lines already flagged) | all (every added line, slow and noisy)
+scope = "targeted"
+model = "en_core_web_md"
+max_lines_per_file = 2000
+
+[tiers]
+test_patterns = [
+  "(^|/)(test|tests|__tests__|spec|specs|testing|fixtures?|__fixtures__|mocks?|__mocks__|stubs?|e2e|cypress|playwright|acceptance|integration-tests?|test[ _-]?data|test[ _-]?files?|testdata|features|step_definitions|__snapshots__)(/|$)",
+  "\\.(test|spec|stories|story)\\.[a-z]+$",
+  "(^|/)test_[^/]+\\.py$",
+  "_test\\.(py|go|rb)$",
+  "(^|/)(conftest\\.py|jest\\.setup\\.[jt]s)$",
+]
+docs_patterns = [
+  "(^|/)(docs?|documentation|examples?|samples?|demo|seeds?|seeders?)(/|$)",
+  "(^|/)(readme|changelog|contributing|code_of_conduct|codeowners|authors|license)[^/]*$",
+  "\\.(md|rst|adoc)$",
+  "(^|/)(seed|sample|example)[^/]*$",
+]
+data_extensions = [
+  "csv", "tsv", "xlsx", "xls", "ods", "sql", "jsonl", "ndjson",
+  "txt", "log", "har", "dat", "docx", "pdf", "eml", "msg", "vcf", "bak", "dump",
+]
+data_patterns = [
+  "(^|/)(data|datasets?|exports?|dumps?|imports?|uploads?|backups?|extracts?)(/|$)",
+]
+# Extra extensions (beyond data_extensions) that NER runs on in "targeted" scope
+ner_extensions = []
+# Repositories whose name matches are treated as test code throughout (journey tests, mocks, prototypes)
+test_repo_patterns = [
+  "(^|-)(journey|acceptance|performance|perf|e2e|integration|smoke|load|contract|ui|api)-?tests?($|-)",
+  "-tests?$", "-test-suite$", "(^|-)(mocks?|stubs?)($|-)", "(^|-)prototype($|-)",
+]
+
+[suppress]
+# Staff and partner addresses: never reported, and names on the same line are treated as staff too
+internal_email_domains = [
+  ".gov.uk", "naturalengland.org.uk", "marinemanagement.org.uk", "cefas.co.uk", "kew.org", "forestryengland.uk",
+]
+# Open source project and vendor addresses found in licence headers and vendored code
+ignore_email_domains = [
+  "apache.org", "osgeo.org", "eclipse.org", "mozilla.org", "w3.org", "gnu.org", "fsf.org", "python.org",
+  "jquery.com", "opensource.org", "oracle.com", "sun.com", "ibm.com", "microsoft.com", "google.com",
+  "redhat.com", "jboss.org", "springsource.org", "pivotal.io", "vmware.com", "github.com",
+]
+# Ignore names and emails of DEFRA org members and of every commit author in the scanned repos
+ignore_staff = true
+# Lines that credit authors (licence headers, @author tags, manifest author fields)
+authorship_patterns = [
+  "@author\\b", "\\bcopyright\\b", "\\(c\\)\\s*\\d{4}", "\u00a9", "all rights reserved",
+  "\\b(authors?|maintainers?|contributors?|credits?)\\b\\s*[\"']?\\s*[:=]",
+  "<(author|developer|maintainer|contributor)s?>",
+]
+authorship_rules = ["person_name", "email", "uk_phone", "street_address", "postcode"]
+
+# Files whose personal data is there on purpose. Each entry skips the listed rules for matching paths.
+[[suppress.paths]]
+name = "published content"
+rules = ["person_name", "email", "uk_phone", "street_address", "postcode", "case_text", "customer_ref", "media", "location"]
+patterns = [
+  "(^|/)(readme|changelog|contributing|code_of_conduct|security|support|history)[^/]*$",
+  "\\.(md|markdown|rst|adoc)$",
+  "(^|/)docs?(/|$)",
+  "\\.(njk|html?|xhtml|hbs|handlebars|ejs|pug|jade|liquid|cshtml|razor|mustache|erb|haml|twig|jinja2?|j2|vm|ftl)$",
+  "(^|/)(locales?|i18n|l10n|lang|langs|translations?|content)/",
+  "(^|/)(strings|labels|messages|translations?|codelists)[^/]*\\.(xml|json|properties|ya?ml)$",
+  "\\.(po|pot|resx)$",
+  "(^|/)(public|static|wwwroot|assets)/",
+]
+
+[[suppress.paths]]
+name = "manifests and credits"
+rules = ["person_name", "email", "uk_phone", "street_address", "postcode"]
+patterns = [
+  "(^|/)(package|bower|composer|app|manifest)\\.json$",
+  "(^|/)(pom\\.xml|build\\.gradle(\\.kts)?|setup\\.py|setup\\.cfg|pyproject\\.toml|cargo\\.toml)$",
+  "(^|/)(chart|catalog-info|mkdocs|publiccode)\\.ya?ml$",
+  "\\.(csproj|vbproj|fsproj|nuspec|gemspec|pom|podspec)$",
+  "(^|/)(codeowners|authors|contributors|maintainers|credits|notice|license|licence|copying)[^/]*$",
+  "(^|/)\\.github/",
+  "(^|/)dockerfile[^/]*$",
+]
+
+[enrich]
+# Only look up GitHub usernames for findings in these bands
+bands = ["High", "Medium", "Low"]
