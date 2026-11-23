@@ -522,6 +522,7 @@ All values in the tests are made up.
 
 ```
 config.toml                    settings
+LICENCE                        Open Government Licence v3.0
 src/pii_scanner/
   cli.py                       commands
   inventory.py, fetch.py       repository list and local copies
@@ -579,3 +580,25 @@ The script needs Node and npm, installs `govuk-frontend` and `sass` in a tempora
 2. Add the rule to `CATEGORIES` in `detectors/rules.py`. Also add it to `IDENTIFIER_RULES` or `LINKABLE_RULES` if it should affect the linked data rules.
 3. Register it in `DIGIT_ONLY` or `TEXT` in `detectors/__init__.py`, and add masking in `mask()` if the default isn't suitable.
 4. Add tests with synthetic values, then run `pii-scan scan --full`.
+
+---
+
+## Licence
+
+THIS INFORMATION IS LICENSED UNDER THE CONDITIONS OF THE OPEN GOVERNMENT LICENCE found at:
+
+<http://www.nationalarchives.gov.uk/doc/open-government-licence/version/3>
+
+The full text of the licence terms is in [LICENCE](./LICENCE).
+
+The following attribution statement MUST be cited in your products and applications when using this information.
+
+> Contains public sector information licensed under the Open Government license v3
+
+### About the licence
+
+The Open Government Licence (OGL) was developed by the Controller of Her Majesty's Stationery Office (HMSO) to enable
+information providers in the public sector to license the use and re-use of their information under a common open
+licence.
+
+It is designed to encourage use and re-use of information freely and flexibly, with only a few conditions.

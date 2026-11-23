@@ -3,6 +3,7 @@ name = "pii-scanner"
 version = "0.1.0"
 description = "Scan a GitHub organisation's public repositories (full history) for leaked personal data"
 requires-python = ">=3.12"
+license = { file = "LICENCE" }
 dependencies = [
   "typer>=0.12",
   "rich>=13",
