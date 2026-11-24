@@ -204,24 +204,25 @@ def test_store_and_report_do_not_leak_raw_values(repo, tmp_path):
     store.finish_run(run_id, 1, 0)
     store.replace_repo_teams("TESTORG", [{"repo": "demo", "slug": "flood-devs", "name": "Flood Devs",
                                           "permission": "write"}])
-    index = build_report(store, tmp_path / "reports", ["TESTORG"])
-    html = index.read_text()
+    top = build_report(store, tmp_path / "reports", ["TESTORG"])
+    assert 'href="TESTORG/index.html"' in top.read_text()
+    reports = tmp_path / "reports" / "TESTORG"
+    html = (reports / "index.html").read_text()
     assert "demo" in html and "Documents not scanned" in html and "Flood Devs" in html
-    reports = tmp_path / "reports"
     assert "Flood Devs" in (reports / "teams.html").read_text()
     assert (reports / "teams" / "flood-devs.html").exists()
     assert "Bob Coder" in (reports / "authors.html").read_text()
     for name in ("by-repo.csv", "by-team.csv", "by-author.csv", "repos/TESTORG__demo.csv", "teams/flood-devs.csv"):
         assert (reports / "exports" / name).exists(), name
     assert "Flood Devs" in (reports / "exports" / "teams" / "flood-devs.csv").read_text()
-    repo_page = (tmp_path / "reports" / "repos" / "TESTORG__demo.html").read_text()
+    repo_page = (reports / "repos" / "TESTORG__demo.html").read_text()
     assert "data/broken.xlsx" in repo_page
     assert f"https://github.com/TESTORG/demo/blob/{repo['c1']}/data/customers.csv#L2" in repo_page
     assert "History only" in repo_page and "Still present" in repo_page
     assert (reports / "assets" / "report.min.css").exists() and (reports / "assets" / "defra-logo.svg").exists()
     assert 'href="../assets/report.min.css"' in repo_page
     assert 'href="teams.html" aria-current="page"' in (reports / "teams.html").read_text()
-    for page in reports.rglob("*.html"):
+    for page in (tmp_path / "reports").rglob("*.html"):
         # The report must work offline and never load anything from outside reports/
         external = re.findall(r'<(?:link|script|img)\b[^>]*\b(?:href|src)="(?:https?:)?//', page.read_text())
         assert not external, f"{page} loads external resources: {external}"
@@ -251,9 +252,9 @@ def test_report_splits_archived_and_orders_by_repo_priority(repo, tmp_path):
                                      [{**f, "repo": "live", "fingerprint": "live-" + f["fingerprint"]}
                                       for f in s.findings], s.full)
     store.finish_run(run_id, 2, 0)
-    reports = tmp_path / "reports"
-    build_report(store, reports, ["TESTORG"])
+    build_report(store, tmp_path / "reports", ["TESTORG"])
     store.close()
+    reports = tmp_path / "reports" / "TESTORG"
 
     index = (reports / "index.html").read_text()
     assert "1 active and 1 archived repositories have findings needing review" in index

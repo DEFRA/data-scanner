@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS repo_teams (
 MIGRATIONS = {
     "repos": {"scan_seconds": "REAL", "scan_lines": "INTEGER", "scan_ner_lines": "INTEGER"},
     "email_logins": {"checked_at": "TEXT"},
+    "runs": {"orgs": "TEXT"},  # JSON list of the organisations a run scanned
 }
 
 FINDING_COLUMNS = (
@@ -140,6 +141,8 @@ class Store:
             for col, kind in cols.items():
                 if col not in have:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
+        # Runs recorded without orgs covered every organisation in the inventory
+        self.db.execute("UPDATE runs SET orgs = ? WHERE orgs IS NULL", (json.dumps(self.orgs()),))
         self.db.commit()
 
     def close(self) -> None:
@@ -161,9 +164,16 @@ class Store:
             )
         self.db.commit()
 
-    def repos(self, names: list[str] | None = None, limit: int | None = None) -> list[sqlite3.Row]:
+    def orgs(self) -> list[str]:
+        return [r[0] for r in self.db.execute("SELECT DISTINCT org FROM repos WHERE in_inventory = 1 ORDER BY org")]
+
+    def repos(self, names: list[str] | None = None, limit: int | None = None,
+              orgs: list[str] | None = None) -> list[sqlite3.Row]:
         sql = "SELECT * FROM repos WHERE in_inventory = 1"
         params: list = []
+        if orgs:
+            sql += f" AND org IN ({','.join('?' * len(orgs))})"
+            params += orgs
         if names:
             sql += f" AND name IN ({','.join('?' * len(names))})"
             params += names
@@ -178,8 +188,9 @@ class Store:
         self.db.commit()
 
     # runs
-    def start_run(self, mode: str) -> int:
-        cur = self.db.execute("INSERT INTO runs (started_at, mode) VALUES (?, ?)", (now(), mode))
+    def start_run(self, mode: str, orgs: list[str] | None = None) -> int:
+        cur = self.db.execute("INSERT INTO runs (started_at, mode, orgs) VALUES (?, ?, ?)",
+                              (now(), mode, json.dumps(orgs if orgs is not None else self.orgs())))
         self.db.commit()
         return cur.lastrowid
 
@@ -195,10 +206,22 @@ class Store:
         )
         self.db.commit()
 
-    def latest_runs(self, n: int = 2) -> list[sqlite3.Row]:
-        return self.db.execute(
-            "SELECT * FROM runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT ?", (n,)
-        ).fetchall()
+    def latest_runs(self, n: int = 2, org: str | None = None) -> list[sqlite3.Row]:
+        """Most recent finished runs, optionally only those that scanned the given organisation."""
+        sql = "SELECT * FROM runs WHERE finished_at IS NOT NULL"
+        params: list = []
+        if org is not None:
+            sql += " AND EXISTS (SELECT 1 FROM json_each(runs.orgs) WHERE value = ?)"
+            params.append(org)
+        return self.db.execute(sql + " ORDER BY id DESC LIMIT ?", (*params, n)).fetchall()
+
+    def run_fingerprints(self, run_id: int, org: str | None = None) -> set[str]:
+        sql = "SELECT rf.fingerprint FROM run_findings rf"
+        params: list = [run_id]
+        if org is not None:
+            sql += " JOIN findings f ON f.fingerprint = rf.fingerprint AND f.org = ?"
+            params.insert(0, org)
+        return {r[0] for r in self.db.execute(sql + " WHERE rf.run_id = ?", params)}
 
     # findings
     def save_repo_findings(self, run_id: int, org: str, repo: str, source: str,
@@ -272,8 +295,9 @@ class Store:
         )
         self.db.commit()
 
-    def skipped_docs(self) -> list[sqlite3.Row]:
-        return self.db.execute("SELECT * FROM skipped_docs ORDER BY org, repo, reason, path").fetchall()
+    def skipped_docs(self, org: str | None = None) -> list[sqlite3.Row]:
+        where, params = (" WHERE org = ?", (org,)) if org is not None else ("", ())
+        return self.db.execute(f"SELECT * FROM skipped_docs{where} ORDER BY org, repo, reason, path", params).fetchall()
 
     def active_paths(self, org: str, repo: str, source: str) -> dict[str, list[str]]:
         """Paths with active findings and the rules found in each."""
@@ -310,15 +334,21 @@ class Store:
             out.setdefault((r["org"], r["repo"]), []).append(dict(r))
         return out
 
-    def findings(self, active_only: bool = True) -> list[sqlite3.Row]:
+    def findings(self, active_only: bool = True, orgs: list[str] | None = None) -> list[sqlite3.Row]:
         sql = """SELECT f.*, t.status AS triage_status, t.note AS triage_note, r.url AS repo_url,
                         r.archived, r.last_commit_at, r.pushed_at, r.default_branch
                  FROM findings f
                  LEFT JOIN triage t ON t.fingerprint = f.fingerprint
                  LEFT JOIN repos r ON r.org = f.org AND r.name = f.repo"""
+        where, params = [], []
         if active_only:
-            sql += " WHERE f.active = 1"
-        return self.db.execute(sql).fetchall()
+            where.append("f.active = 1")
+        if orgs:
+            where.append(f"f.org IN ({','.join('?' * len(orgs))})")
+            params += orgs
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        return self.db.execute(sql, params).fetchall()
 
     # triage
     def upsert_triage(self, fingerprint: str, status: str, note: str, reviewer: str) -> None:

@@ -34,7 +34,9 @@ def fetch_mirror(path: Path, url: str, default_branch: str | None,
     if fresh:
         _init_mirror(path, url, refspecs)
     try:
-        git(path, "fetch", "--prune", "--quiet", "--no-tags", "origin")
+        # Give up on a connection that has sent nothing for 5 minutes, rather than hanging the whole fetch
+        git(path, "-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=300",
+            "fetch", "--prune", "--quiet", "--no-tags", "origin")
     except GitError:
         if fresh:
             shutil.rmtree(path, ignore_errors=True)

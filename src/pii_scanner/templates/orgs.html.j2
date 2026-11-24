@@ -1,0 +1,44 @@
+{% extends "base.html.j2" %}
+{% from "_macros.html.j2" import band_tag %}
+{% block title %}Organisations{% endblock %}
+{% block content %}
+<span class="govuk-caption-l">Personal data scan</span>
+<h1 class="govuk-heading-xl">Organisations scanned</h1>
+<p class="govuk-body-l">
+  {{ org_rows|length }} organisations, {{ org_rows|sum(attribute='repos_total') }} public repositories in inventory.
+</p>
+<p class="govuk-body">
+  Each organisation has its own self-contained report folder with its findings, CSV and JSON exports.
+  Send each organisation only its own folder.
+</p>
+<table class="govuk-table app-table--auto">
+<thead class="govuk-table__head">
+<tr class="govuk-table__row">
+  <td class="govuk-table__header" colspan="3"></td>
+  <th scope="colgroup" colspan="3" class="govuk-table__header app-table__group">Queue A: production code, data files and wikis</th>
+  <th scope="colgroup" colspan="3" class="govuk-table__header app-table__group">Queue B: tests, fixtures and docs</th>
+  <td class="govuk-table__header" colspan="2"></td>
+</tr>
+<tr class="govuk-table__row">
+  <th scope="col" class="govuk-table__header">Organisation</th>
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Repositories</th>
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric">Needing review</th>
+  {% for q in ['A', 'B'] %}{% for b in ['High', 'Medium', 'Low'] %}<th scope="col" class="govuk-table__header govuk-table__header--numeric{% if loop.first %} app-table__group{% endif %}">{{ band_tag(b) }}</th>{% endfor %}{% endfor %}
+  <th scope="col" class="govuk-table__header govuk-table__header--numeric app-table__group">Reviewable</th>
+  <th scope="col" class="govuk-table__header">Last scan run</th>
+</tr>
+</thead>
+<tbody class="govuk-table__body">
+{% for r in org_rows %}
+<tr class="govuk-table__row">
+  <th scope="row" class="govuk-table__header">{% if r.built %}<a class="govuk-link" href="{{ r.org }}/index.html">{{ r.org|org_name }}</a>{% else %}{{ r.org|org_name }}{% endif %}</th>
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ r.repos_total }}</td>
+  <td class="govuk-table__cell govuk-table__cell--numeric">{{ r.repos_with_review }}</td>
+  {% for q in ['A', 'B'] %}{% for b in ['High', 'Medium', 'Low'] %}<td class="govuk-table__cell govuk-table__cell--numeric{% if loop.first %} app-table__group{% endif %}">{{ r.counts[(q, b)] }}</td>{% endfor %}{% endfor %}
+  <td class="govuk-table__cell govuk-table__cell--numeric app-table__group"><strong>{{ r.reviewable }}</strong></td>
+  <td class="govuk-table__cell">{% if r.last_run %}Run {{ r.last_run.id }}, {{ r.last_run.finished_at }}{% else %}Not scanned yet{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

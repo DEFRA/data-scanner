@@ -15,20 +15,21 @@ STATUSES = {
     "remediated": "Removed and history cleaned",
 }
 CLEAR = "clear"
-FIELDS = ("fingerprint", "status", "note", "band", "score", "queue", "repo", "category", "masked", "path", "line",
-          "location", "file_url", "commit_url", "author_name", "github_login", "in_head")
+FIELDS = ("fingerprint", "status", "note", "band", "score", "queue", "org", "repo", "category", "masked", "path",
+          "line", "location", "file_url", "commit_url", "author_name", "github_login", "in_head")
 
 
-def export_triage(store: Store, path: Path, bands: list[str], include_triaged: bool) -> int:
+def export_triage(store: Store, path: Path, bands: list[str], include_triaged: bool,
+                  orgs: list[str] | None = None) -> int:
     rows = []
-    for r in store.findings():
+    for r in store.findings(orgs=orgs):
         f = dict(r)
         if f["band"] not in bands or (f["triage_status"] and not include_triaged):
             continue
         f["file_url"], f["commit_url"] = links(f)
         f["status"], f["note"] = f["triage_status"] or "", f["triage_note"] or ""
         rows.append({k: _csv_safe(f.get(k)) for k in FIELDS})
-    rows.sort(key=lambda r: (-(r["score"] or 0), r["repo"]))
+    rows.sort(key=lambda r: (-(r["score"] or 0), r["org"], r["repo"]))
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         w.writeheader()
