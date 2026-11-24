@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import os
 import re
+import sys
 import threading
 import time
 import traceback
@@ -677,10 +678,35 @@ _POLL_SECONDS = 0.5
 
 
 def _rss() -> int:
+    """Current resident memory in bytes, or 0 where it can't be read."""
+    if sys.platform == "darwin":
+        return _mach_rss()
     try:
         with open("/proc/self/statm") as fh:
             return int(fh.read().split()[1]) * _PAGE
     except (OSError, ValueError, IndexError):
+        return 0
+
+
+class _MachTaskBasicInfo(ctypes.Structure):
+    _fields_ = [("virtual_size", ctypes.c_uint64), ("resident_size", ctypes.c_uint64),
+                ("resident_size_max", ctypes.c_uint64), ("times", ctypes.c_int32 * 4),
+                ("policy", ctypes.c_int32), ("suspend_count", ctypes.c_int32)]
+
+
+_MACH_TASK_BASIC_INFO = 20
+
+
+def _mach_rss() -> int:
+    try:
+        libc = ctypes.CDLL(None)
+        info = _MachTaskBasicInfo()
+        count = ctypes.c_uint32(ctypes.sizeof(info) // 4)
+        task = ctypes.c_uint32.in_dll(libc, "mach_task_self_")
+        if libc.task_info(task, _MACH_TASK_BASIC_INFO, ctypes.byref(info), ctypes.byref(count)) != 0:
+            return 0
+        return info.resident_size
+    except (OSError, ValueError, AttributeError):
         return 0
 
 

@@ -63,15 +63,12 @@ def _author(f: dict) -> tuple[str, str]:
     return email or f.get("author_name") or "unknown", f"{f.get('author_name') or ''} <{email}>"
 
 
-def _load(store: Store) -> tuple[list[dict], dict]:
-    runs = store.latest_runs(2)
-    prev_ids = set()
-    if len(runs) == 2:
-        prev_ids = {r["fingerprint"] for r in store.db.execute(
-            "SELECT fingerprint FROM run_findings WHERE run_id = ?", (runs[1]["id"],))}
+def _load(store: Store, org: str) -> tuple[list[dict], dict]:
+    runs = store.latest_runs(2, org)
+    prev_ids = store.run_fingerprints(runs[1]["id"], org) if len(runs) == 2 else set()
     teams = store.repo_teams()
     findings = []
-    for row in store.findings():
+    for row in store.findings(orgs=[org]):
         f = dict(row)
         f["reasons"] = json.loads(f["reasons"])
         f["file_url"], f["commit_url"] = links(f)
@@ -89,9 +86,10 @@ def _load(store: Store) -> tuple[list[dict], dict]:
     return findings, meta
 
 
-def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
-    findings, meta = _load(store)
-    repos = [dict(r) for r in store.repos()]
+def build_report(store: Store, out_dir: Path, orgs: list[str] | None = None) -> Path:
+    """One self-contained report per organisation under out_dir/<org>/, plus an index of organisations.
+
+    Without orgs every organisation in the inventory is rebuilt; otherwise only those folders are replaced."""
     env = Environment(
         loader=FileSystemLoader(Path(__file__).parent / "templates"),
         autoescape=select_autoescape(["html", "j2"]),
@@ -101,6 +99,51 @@ def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
     env.globals.update(repo_slug=repo_slug, bands=BAND_ORDER, categories=CATEGORIES, export_fields=EXPORT_FIELDS,
                        filter_options=filter_options, head_state=head_state)
     env.filters["org_name"] = org_name
+
+    if orgs is None:
+        orgs = store.orgs()
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for org in orgs:
+        _build_org_report(store, env, out_dir / org, org)
+
+    shutil.copytree(STATIC_DIR, out_dir / "assets", dirs_exist_ok=True)
+    rows = _org_overview(store)
+    for r in rows:
+        r["built"] = (out_dir / r["org"] / "index.html").exists()
+    html = env.get_template("orgs.html.j2").render(
+        meta={"runs": [dict(r) for r in store.latest_runs(1)]}, org=None, root="", nav=None, org_rows=rows)
+    (out_dir / "index.html").write_text(html, encoding="utf-8")
+    return out_dir / "index.html"
+
+
+def _org_overview(store: Store) -> list[dict]:
+    """Counts only (no finding detail) per organisation, for the top-level index."""
+    rows = {org: {"org": org, "repos_total": 0, "repos_with_review": 0, "counts": Counter(), "last_run": None}
+            for org in store.orgs()}
+    for r in store.db.execute("SELECT org, COUNT(*) FROM repos WHERE in_inventory = 1 GROUP BY org"):
+        rows[r[0]]["repos_total"] = r[1]
+    hidden, review = ",".join("?" * len(HIDDEN_TRIAGE)), ",".join("?" * len(REVIEW_BANDS))
+    visible = f"""FROM findings f LEFT JOIN triage t ON t.fingerprint = f.fingerprint
+                  WHERE f.active = 1 AND f.band IN ({review}) AND (t.status IS NULL OR t.status NOT IN ({hidden}))"""
+    params = (*REVIEW_BANDS, *HIDDEN_TRIAGE)
+    for r in store.db.execute(f"SELECT f.org, f.queue, f.band, COUNT(*) {visible} GROUP BY 1, 2, 3", params):
+        if r[0] in rows:
+            rows[r[0]]["counts"][(r[1], r[2])] = r[3]
+    for r in store.db.execute(f"SELECT f.org, COUNT(DISTINCT f.repo) {visible} GROUP BY 1", params):
+        if r[0] in rows:
+            rows[r[0]]["repos_with_review"] = r[1]
+    for row in rows.values():
+        last = store.latest_runs(1, row["org"])
+        row["last_run"] = dict(last[0]) if last else None
+        row["reviewable"] = sum(row["counts"].values())
+    return sorted(rows.values(), key=lambda r: (-r["counts"][("A", "High")], -r["reviewable"], r["org"].lower()))
+
+
+def _build_org_report(store: Store, env: Environment, out_dir: Path, org: str) -> None:
+    findings, meta = _load(store, org)
+    repos = [dict(r) for r in store.repos(orgs=[org])]
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -114,7 +157,7 @@ def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
         by_repo[(f["org"], f["repo"])].append(f)
 
     skipped_by_repo: dict[tuple[str, str], list[dict]] = defaultdict(list)
-    for row in store.skipped_docs():
+    for row in store.skipped_docs(org):
         d = dict(row)
         sha = d["commit_sha"]
         d["url"] = f"https://github.com/{d['org']}/{d['repo']}/blob/{sha}/{quote(d['path'])}" if sha else None
@@ -147,7 +190,7 @@ def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
     author_rows, author_findings = _group(visible, lambda f: [(f["author_key"], f["author_label"])])
 
     summary = {
-        "orgs": orgs,
+        "orgs": [org],
         "repos_total": len(repos),
         "repos_with_findings": sum(1 for r in repo_rows if r["total"]),
         "repos_with_review": Counter(
@@ -173,7 +216,7 @@ def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
     }
 
     def render(template: str, path: Path, nav: str | None = None, **ctx) -> None:
-        html = env.get_template(template).render(meta=meta, summary=summary, nav=nav, **ctx)
+        html = env.get_template(template).render(meta=meta, summary=summary, nav=nav, org=org, **ctx)
         path.write_text(html, encoding="utf-8")
 
     render("index.html.j2", out_dir / "index.html", nav="summary", repo_rows=repo_rows, root="")
@@ -208,7 +251,6 @@ def build_report(store: Store, out_dir: Path, orgs: list[str]) -> Path:
 
     _export(findings, out_dir)
     _export_groups(out_dir, repo_rows, by_repo, team_rows, team_findings, author_rows, author_findings)
-    return out_dir / "index.html"
 
 
 def _group(findings: list[dict], keys) -> tuple[list[dict], dict[str, list[dict]]]:

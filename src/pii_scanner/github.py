@@ -43,6 +43,22 @@ def _respect_rate_limit(rate: dict | None, console: Console | None) -> None:
     time.sleep(wait)
 
 
+def enterprise_orgs(enterprise: str, console: Console | None = None) -> list[str]:
+    query = f"""query($enterprise: String!, $cursor: String) {{
+      enterprise(slug: $enterprise) {{ organizations(first: 100, after: $cursor) {{
+        pageInfo {{ hasNextPage endCursor }} nodes {{ login }} }} }} {RATE_FIELDS} }}"""
+    logins, cursor = [], None
+    while True:
+        ent = graphql(query, console, enterprise=enterprise, cursor=cursor).get("enterprise")
+        if not ent:
+            raise GitHubError(f"enterprise {enterprise!r} not found or not visible to this token")
+        conn = ent["organizations"]
+        logins += [n["login"] for n in conn["nodes"] if n]
+        if not conn["pageInfo"]["hasNextPage"]:
+            return sorted(logins, key=str.lower)
+        cursor = conn["pageInfo"]["endCursor"]
+
+
 def org_members(org: str, console: Console | None = None) -> list[dict]:
     query = f"""query($org: String!, $cursor: String) {{
       organization(login: $org) {{ membersWithRole(first: 100, after: $cursor) {{

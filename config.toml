@@ -1,4 +1,5 @@
 [github]
+# To scan other organisations too, see "Scanning several organisations" in the README
 orgs = ["DEFRA"]
 include_forks = false
 # Repo names (without org) to skip entirely

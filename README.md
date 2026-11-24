@@ -27,18 +27,19 @@ Your review decisions are kept between runs, so you can rerun it regularly to ge
 3. [Prerequisites](#prerequisites)
 4. [Installation](#installation)
 5. [Quick start](#quick-start)
-6. [Commands and options](#commands-and-options)
-7. [Configuration](#configuration)
-8. [How findings are scored](#how-findings-are-scored)
-9. [Reading the report](#reading-the-report)
-10. [Triage workflow](#triage-workflow)
-11. [Running it repeatedly](#running-it-repeatedly)
-12. [Speed](#speed)
-13. [What to do with a confirmed finding](#what-to-do-with-a-confirmed-finding)
-14. [Data handling and security](#data-handling-and-security)
-15. [Limitations](#limitations)
-16. [Troubleshooting](#troubleshooting)
-17. [Development](#development)
+6. [Scanning several organisations](#scanning-several-organisations)
+7. [Commands and options](#commands-and-options)
+8. [Configuration](#configuration)
+9. [How findings are scored](#how-findings-are-scored)
+10. [Reading the report](#reading-the-report)
+11. [Triage workflow](#triage-workflow)
+12. [Running it repeatedly](#running-it-repeatedly)
+13. [Speed](#speed)
+14. [What to do with a confirmed finding](#what-to-do-with-a-confirmed-finding)
+15. [Data handling and security](#data-handling-and-security)
+16. [Limitations](#limitations)
+17. [Troubleshooting](#troubleshooting)
+18. [Development](#development)
 
 ---
 
@@ -129,11 +130,41 @@ The examples below call `.venv/bin/pii-scan`. If you activate the virtual enviro
 
 `run` runs these steps in order: `inventory`, `fetch`, `scan`, `enrich`, `teams`, `report`. The first run downloads every repository and can take a long time. Later runs only download and scan new commits.
 
+## Scanning several organisations
+
+By default only the `DEFRA` organisation is scanned. All organisations share one database (`data/scanner.db`) and one set of local copies (`data/mirrors/<org>/`), so scanning another organisation never overwrites earlier results, and triage decisions carry over.
+
+1. Allow the GitHub CLI to read the enterprise. This opens a browser to approve it, and you need to be a member of the enterprise:
+   ```bash
+   gh auth refresh -h github.com -s read:enterprise
+   ```
+2. Find the enterprise's slug (the `slug` value in the output, for example `defra`):
+   ```bash
+   gh api graphql -f query='{ viewer { enterprises(first: 20) { nodes { slug } } } }'
+   ```
+3. List its organisations:
+   ```bash
+   .venv/bin/pii-scan orgs defra
+   ```
+   It prints an `orgs = [...]` line. Replace the `orgs` line in `config.toml` with it. Keep `DEFRA` (and any organisation you've already scanned) in the list so it stays in the report. If you're not an enterprise member, ask an enterprise owner for the list and type it in yourself.
+4. Scan only the organisations that are new to you with `--org`. Others in the database are left alone:
+   ```bash
+   .venv/bin/pii-scan run --org Org-One,Org-Two
+   ```
+   Without `--org`, every organisation in `orgs` is updated (incrementally, so ones with no new commits are quick).
+5. Open `reports/index.html`. It lists each organisation with counts only and links to its own report in `reports/<org>/`.
+
+Each `reports/<org>/` folder is self-contained (its own pages, `findings.csv`, `findings.json`, `exports/` and stylesheet) and holds only that organisation's findings, so you can zip it and send it to that organisation's admins. Don't send the whole `reports/` folder.
+
+Staff suppression covers the whole enterprise: commit authors and members of any organisation in the database are treated as staff in every organisation. Teams and members are read per organisation, which needs you to be a member of each one; otherwise a warning is printed and those pages show no teams.
+
+Run one `pii-scan` at a time against the same database. To scan several organisations, pass them all to one `--org`.
+
 ---
 
 ## Commands and options
 
-Every command accepts `--config/-c PATH` (default `config.toml` in the current directory) and `--help`.
+Every command accepts `--config/-c PATH` (default `config.toml` in the current directory) and `--help`. `inventory`, `fetch`, `scan`, `run` and `teams` also accept `--org a,b`, which replaces `orgs` from the config for that command.
 
 ### `pii-scan run`
 
@@ -141,6 +172,7 @@ Runs the whole pipeline.
 
 | Option | Meaning |
 | --- | --- |
+| `--org a,b` | Only these organisations (default: `orgs` in the config). The report is still rebuilt for every organisation |
 | `--repos a,b,c` | Only these repository names |
 | `--limit N` | Only the first N repositories (alphabetical) |
 | `--full` | Rescan all history instead of only new commits. Use this after changing detection rules or config |
@@ -172,11 +204,15 @@ Looks up the GitHub username behind each commit that introduced a High, Medium o
 
 Records which GitHub teams have **write, maintain or admin** access to each repository (child teams inherit their parent team's access). This needs you to be a member of the organisation. Teams you can't see (secret teams you're not in) are left out. Shown on repository pages, the summary and the Teams page.
 
-### `pii-scan report [--open]`
+### `pii-scan report [--org a,b] [--open]`
 
-Rebuilds `reports/` from the database. It's fast, so run it after importing triage decisions.
+Rebuilds `reports/` from the database: one folder per organisation and the top-level index. It's fast, so run it after importing triage decisions. With `--org`, only those organisations' folders (and the index) are replaced.
 
-### `pii-scan triage export [FILE] [--bands High,Medium,Low] [--include-triaged]`
+### `pii-scan orgs ENTERPRISE [--exclude a,b]`
+
+Lists the organisations in a GitHub enterprise and prints them as an `orgs = [...]` line for `config.toml`. Needs enterprise membership and the `read:enterprise` scope.
+
+### `pii-scan triage export [FILE] [--bands High,Medium,Low] [--include-triaged] [--org a,b]`
 
 Writes findings to a CSV file (default `triage.csv`) for review. See [Triage workflow](#triage-workflow).
 
@@ -192,7 +228,7 @@ Records the decisions from an edited triage CSV.
 
 | Section | Key | Default | Meaning |
 | --- | --- | --- | --- |
-| `[github]` | `orgs` | `["DEFRA"]` | Organisations to scan |
+| `[github]` | `orgs` | `["DEFRA"]` | Organisations to scan (overridden by `--org`) |
 | | `include_forks` | `false` | Include forked repositories |
 | | `exclude_repos` | `[]` | Repository names to skip |
 | `[paths]` | `data_dir` | `data` | Local copies, database and secret key |
@@ -200,7 +236,7 @@ Records the decisions from an edited triage CSV.
 | `[fetch]` | `workers` | `8` | Parallel downloads |
 | | `include_wikis` | `true` | Copy and scan wikis |
 | `[scan]` | `workers` | `4` | Parallel scan processes. Each loads its own spaCy model (about 400 MB), so lower this if memory is tight |
-| | `max_memory_mb` | `0` | Most extra memory one repository may use inside a worker. `0` sizes it from the RAM available when the scan starts. A repository that goes over is recorded as an error and retried on the next run |
+| | `max_memory_mb` | `0` | Most extra memory one repository may use inside a worker. `0` sizes it from the RAM available when the scan starts (Linux and WSL; on macOS, which swaps rather than killing processes, `0` means no limit). A repository that goes over is recorded as an error and retried on the next run |
 | | `max_line_length` | `4000` | Longer lines are skipped as generated or minified |
 | | `large_file_bytes` | `2000000` | Text files bigger than this are sampled instead of diffed through history |
 | | `large_file_sample_lines` | `5000` | Lines checked from the start of each version of a large file |
@@ -313,7 +349,7 @@ At most 100 distinct values of each type are listed per file. The highest-scorin
 
 ## Reading the report
 
-Open `reports/index.html`. The report uses [GOV.UK Design System](https://design-system.service.gov.uk/) components set in Arial, with a Defra header and green navigation like the [Defra digital service manual](https://digital.defra.gov.uk/service-manual). Every page shows an OFFICIAL-SENSITIVE warning as a reminder that it's sensitive.
+Open `reports/index.html` for the list of organisations, then an organisation's `reports/<org>/index.html`. The pages and exports below are per organisation. The report uses [GOV.UK Design System](https://design-system.service.gov.uk/) components set in Arial, with a Defra header and green navigation like the [Defra digital service manual](https://digital.defra.gov.uk/service-manual). Every page shows an OFFICIAL-SENSITIVE warning as a reminder that it's sensitive.
 
 In any table, select a column heading to sort it, and use the *Filter* box above it to narrow the rows.
 
@@ -366,10 +402,10 @@ Only High, Medium and Low findings that haven't been triaged away are counted on
 
 ### Exports
 
-- `reports/findings.csv`: every active finding with full links, teams and reasons. Cells starting with `=`, `+`, `-` or `@` are prefixed with `'` so spreadsheet apps don't run them as formulas.
-- `reports/findings.json`: the same data for scripts.
-- `reports/exports/by-repo.csv`, `by-team.csv`, `by-author.csv`: one summary row per repository, team or author, with counts per queue and band.
-- `reports/exports/repos/<org>__<repo>.csv`, `teams/<team>.csv`, `authors/<author>.csv`: the reviewable findings for one repository, team or author, ready to send to the people who need to act. Every page in the report links to its own CSV.
+- `reports/<org>/findings.csv`: every active finding in that organisation with full links, teams and reasons. Cells starting with `=`, `+`, `-` or `@` are prefixed with `'` so spreadsheet apps don't run them as formulas.
+- `reports/<org>/findings.json`: the same data for scripts.
+- `reports/<org>/exports/by-repo.csv`, `by-team.csv`, `by-author.csv`: one summary row per repository, team or author, with counts per queue and band.
+- `reports/<org>/exports/repos/<org>__<repo>.csv`, `teams/<team>.csv`, `authors/<author>.csv`: the reviewable findings for one repository, team or author, ready to send to the people who need to act. Every page in the report links to its own CSV.
 
 ### Interpreting common patterns
 
@@ -387,6 +423,7 @@ Only High, Medium and Low findings that haven't been triaged away are counted on
    ```bash
    .venv/bin/pii-scan triage export triage.csv               # High, Medium, Low without a decision
    .venv/bin/pii-scan triage export triage.csv --bands High  # just High
+   .venv/bin/pii-scan triage export triage.csv --org Org-One # one organisation
    ```
 2. Open `triage.csv` in a spreadsheet and fill in `status` (and optionally `note`) for each row. Use the `file_url` and `commit_url` links to check the context.
 
@@ -423,9 +460,10 @@ Decisions are stored against each finding's **fingerprint**, which stays the sam
 - **Incremental scans:** the scanner remembers every branch, tag and PR tip it scanned in each repository. The next scan only reads commits that weren't reachable before. A repository with no new commits is skipped.
 - **Rewritten history:** if a branch was force-pushed or deleted, that repository automatically gets a full rescan. Findings that have gone show as no longer present in "Changes since previous run".
 - **Interrupted runs:** each repository is saved as soon as it finishes, so after a crash or Ctrl-C you can run `pii-scan run --skip-fetch` (without `--full`) and only the unfinished repositories are scanned.
+- **Lost connection:** an organisation that can't be listed after 3 attempts keeps its previous repository list, with a warning. A download that receives nothing for 5 minutes is abandoned and recorded as a fetch error. Run `pii-scan fetch` again to retry; finished repositories only fetch new commits.
 - **Killed workers:** if the operating system kills a scan worker (usually out of memory), only the repositories it was working on are retried on their own. If one still fails it is recorded as an error and the run carries on.
 - **"Still present" check:** redone for files that changed on the default branch or have new findings. Files whose default-branch version hasn't changed since the last check are skipped. `--full` rechecks everything.
-- **Run history:** every run is recorded, and the summary compares the latest run with the one before it.
+- **Run history:** every run records which organisations it scanned. Each organisation's summary compares the latest two runs that included it, so scanning one organisation doesn't make another's findings look new.
 - **Different scopes:** `--repos` and `--limit` work for quick checks. The report always shows the latest state of every repository scanned so far.
 
 ---
@@ -524,6 +562,7 @@ Deleting the file in a new commit **doesn't** remove the data. It stays in histo
   - incremental scans
   - that no raw value ever appears in findings or the HTML report
   - that report pages load nothing from outside `reports/`
+- `tests/test_multi_org.py` checks that each organisation's report folder and exports contain only its own findings, that "new since previous run" is worked out per organisation, the `--org` filter, and that an organisation that can't be listed keeps its repositories.
 
 All values in the tests are made up.
 
@@ -546,9 +585,9 @@ src/pii_scanner/
   data/given_names.txt         given names list (built by scripts/build_given_names.py)
   context.py, scoring.py       tiers, suppression rules, fake-data signals, scoring and bands
   store.py                     SQLite database
-  github.py                    GitHub GraphQL: batched username lookups, teams, members
+  github.py                    GitHub GraphQL: batched username lookups, teams, members, enterprise organisations
   enrich.py                    username, team and member refresh
-  report.py, templates/        HTML, CSV and JSON reports, team and author pages
+  report.py, templates/        per-organisation HTML, CSV and JSON reports, team and author pages, organisation index
   static/                      compiled report stylesheet and Defra logo, copied to reports/assets/
   triage.py                    triage export/import
 scripts/

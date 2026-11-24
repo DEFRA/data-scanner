@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -13,6 +14,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, T
 from .config import Config, load_config
 from .enrich import enrich_logins, refresh_members, refresh_teams
 from .fetch import fetch_repo, mirror_path
+from .github import GitHubError, enterprise_orgs
 from .gitutil import git
 from .inventory import refresh_inventory
 from .report import build_report
@@ -21,7 +23,7 @@ from .scanner import ScanTask
 from .store import Store, now
 from .triage import STATUSES, export_triage, import_triage
 
-app = typer.Typer(no_args_is_help=True, help="Scan a GitHub organisation's public repositories for leaked personal data.")
+app = typer.Typer(no_args_is_help=True, help="Scan GitHub organisations' public repositories for leaked personal data.")
 triage_app = typer.Typer(no_args_is_help=True, help="Export findings for review and import decisions.")
 app.add_typer(triage_app, name="triage")
 console = Console()
@@ -29,11 +31,24 @@ console = Console()
 ConfigOpt = Annotated[Path, typer.Option("--config", "-c", help="Path to config.toml")]
 ReposOpt = Annotated[Optional[str], typer.Option(help="Comma separated repo names to limit to")]
 LimitOpt = Annotated[Optional[int], typer.Option(help="Only process the first N repos (alphabetical)")]
+OrgOpt = Annotated[Optional[str], typer.Option("--org", help="Comma separated organisations (overrides config orgs)")]
+ORG_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 
 
-def _setup(config: Path) -> tuple[Config, Store]:
+def _setup(config: Path, org: str | None = None) -> tuple[Config, Store]:
     cfg = load_config(config)
+    if org is not None:
+        cfg.orgs = _orgs(org)
     return cfg, Store(cfg.db_path)
+
+
+def _orgs(value: str) -> list[str]:
+    orgs = [o.strip() for o in value.split(",") if o.strip()]
+    # Logins become report folder names, so reject anything that is not a GitHub login
+    bad = [o for o in orgs if not ORG_LOGIN.match(o)]
+    if bad or not orgs:
+        raise typer.BadParameter(f"not a GitHub organisation login: {', '.join(bad) or value!r}", param_hint="--org")
+    return orgs
 
 
 def _names(repos: str | None) -> list[str] | None:
@@ -61,8 +76,13 @@ def _resolve_ner(cfg: Config, scope: str) -> str:
 
 
 def do_inventory(cfg: Config, store: Store) -> None:
-    for org, n in refresh_inventory(cfg, store).items():
+    counts, errors = refresh_inventory(cfg, store)
+    for org, n in counts.items():
         console.print(f"{org}: {n} public repositories in scope")
+    for org, error in errors.items():
+        console.print(f"[yellow]{org}: could not list repositories, kept the previous list ({error})[/]")
+    if errors:
+        console.print("[yellow]Run `pii-scan inventory` again when the connection is back[/]")
     if cfg.ignore_staff:
         console.print(f"{refresh_members(cfg, store, console)} organisation members recorded as staff")
 
@@ -91,7 +111,7 @@ def _commit_authors(cfg: Config, repos) -> tuple[list[str], list[str]]:
 
 
 def do_fetch(cfg: Config, store: Store, names: list[str] | None, limit: int | None) -> None:
-    repos = store.repos(names, limit)
+    repos = store.repos(names, limit, cfg.orgs)
     if not repos:
         console.print("[yellow]No repositories in inventory; run `pii-scan inventory` first[/]")
         return
@@ -116,12 +136,12 @@ def do_scan(cfg: Config, store: Store, names: list[str] | None, limit: int | Non
             ner_scope: str | None) -> int:
     scope = _resolve_ner(cfg, ner_scope or cfg.ner_scope)
     key = cfg.hmac_key()
-    repos = [r for r in store.repos(names, limit)
+    repos = [r for r in store.repos(names, limit, cfg.orgs)
              if (mirror_path(cfg.mirrors_dir, r["org"], r["name"]) / "HEAD").exists()]
     if not repos:
         console.print("[yellow]No fetched repositories to scan; run `pii-scan fetch` first[/]")
         raise typer.Exit(1)
-    run_id = store.start_run("full" if full else "incremental")
+    run_id = store.start_run("full" if full else "incremental", sorted({r["org"] for r in repos}))
     tasks = []
     # Biggest first, so one huge repo does not start last and stretch the run
     for r in sorted(repos, key=lambda r: -(r["size_kb"] or 0)):
@@ -135,6 +155,7 @@ def do_scan(cfg: Config, store: Store, names: list[str] | None, limit: int | Non
                               old, full, known, cfg, key, scope, store.head_checks(r["org"], r["name"])))
     staff = None
     if cfg.ignore_staff:
+        # Every organisation in the database, so staff of any enterprise organisation count as staff
         names, emails = _commit_authors(cfg, store.repos())
         staff = (names + store.member_names(), emails)
         console.print(f"Ignoring {len(staff[0])} staff names and {len(emails)} staff emails")
@@ -189,24 +210,25 @@ def _persist(store: Store, run_id: int, res: dict) -> None:
     store.update_repo(org, name, **fields)
 
 
-def do_report(cfg: Config, store: Store) -> Path:
-    index = build_report(store, cfg.reports_dir, cfg.orgs)
+def do_report(cfg: Config, store: Store, orgs: list[str] | None = None) -> Path:
+    index = build_report(store, cfg.reports_dir, orgs)
     console.print(f"Report written to {index}")
     return index
 
 
 @app.command()
-def inventory(config: ConfigOpt = Path("config.toml")) -> None:
-    """List the organisation's public, non-fork repositories via gh."""
-    cfg, store = _setup(config)
+def inventory(config: ConfigOpt = Path("config.toml"), org: OrgOpt = None) -> None:
+    """List each organisation's public, non-fork repositories via gh."""
+    cfg, store = _setup(config, org)
     do_inventory(cfg, store)
     store.close()
 
 
 @app.command()
-def fetch(config: ConfigOpt = Path("config.toml"), repos: ReposOpt = None, limit: LimitOpt = None) -> None:
+def fetch(config: ConfigOpt = Path("config.toml"), repos: ReposOpt = None, limit: LimitOpt = None,
+          org: OrgOpt = None) -> None:
     """Create or update local bare mirrors (branches, tags, PR heads, wikis)."""
-    cfg, store = _setup(config)
+    cfg, store = _setup(config, org)
     do_fetch(cfg, store, _names(repos), limit)
     store.close()
 
@@ -216,11 +238,12 @@ def scan(
     config: ConfigOpt = Path("config.toml"),
     repos: ReposOpt = None,
     limit: LimitOpt = None,
+    org: OrgOpt = None,
     full: Annotated[bool, typer.Option(help="Rescan all history instead of only new commits")] = False,
     ner_scope: Annotated[Optional[str], typer.Option(help="off | targeted | all (overrides config)")] = None,
 ) -> None:
     """Scan fetched mirrors for personal data."""
-    cfg, store = _setup(config)
+    cfg, store = _setup(config, org)
     do_scan(cfg, store, _names(repos), limit, full, ner_scope)
     store.close()
 
@@ -236,10 +259,12 @@ def enrich(config: ConfigOpt = Path("config.toml")) -> None:
 
 @app.command()
 def report(config: ConfigOpt = Path("config.toml"),
+           org: Annotated[Optional[str], typer.Option("--org", help="Only rebuild these organisations' folders "
+                                                      "(default: every organisation in the inventory)")] = None,
            open_browser: Annotated[bool, typer.Option("--open", help="Open the summary in a browser")] = False) -> None:
-    """Build the HTML summary, per-repo pages and CSV/JSON exports."""
+    """Build a report folder per organisation (HTML, per-repo pages, CSV/JSON exports) and an index of them."""
     cfg, store = _setup(config)
-    index = do_report(cfg, store)
+    index = do_report(cfg, store, _orgs(org) if org is not None else None)
     store.close()
     if open_browser:
         webbrowser.open(index.resolve().as_uri())
@@ -250,12 +275,13 @@ def run(
     config: ConfigOpt = Path("config.toml"),
     repos: ReposOpt = None,
     limit: LimitOpt = None,
+    org: OrgOpt = None,
     full: Annotated[bool, typer.Option(help="Rescan all history instead of only new commits")] = False,
     skip_fetch: Annotated[bool, typer.Option(help="Use existing mirrors without fetching")] = False,
     ner_scope: Annotated[Optional[str], typer.Option(help="off | targeted | all (overrides config)")] = None,
 ) -> None:
     """inventory, fetch, scan, enrich, teams and report in one go."""
-    cfg, store = _setup(config)
+    cfg, store = _setup(config, org)
     names = _names(repos)
     if not skip_fetch:
         do_inventory(cfg, store)
@@ -268,11 +294,29 @@ def run(
 
 
 @app.command()
-def teams(config: ConfigOpt = Path("config.toml")) -> None:
+def teams(config: ConfigOpt = Path("config.toml"), org: OrgOpt = None) -> None:
     """Record which GitHub teams have write, maintain or admin access to each repository."""
-    cfg, store = _setup(config)
+    cfg, store = _setup(config, org)
     do_teams(cfg, store)
     store.close()
+
+
+@app.command()
+def orgs(
+    enterprise: Annotated[str, typer.Argument(help="Enterprise slug, as in github.com/enterprises/<slug>")],
+    exclude: Annotated[Optional[str], typer.Option(help="Comma separated organisations to leave out")] = None,
+) -> None:
+    """List the organisations in a GitHub enterprise (needs enterprise membership and read:enterprise)."""
+    skip = {o.lower() for o in _orgs(exclude)} if exclude else set()
+    try:
+        logins = [o for o in enterprise_orgs(enterprise, console) if o.lower() not in skip]
+    except GitHubError as e:
+        console.print(f"[red]Could not list organisations in {enterprise}: {e}[/]")
+        console.print("You need to be an enterprise member, and `gh auth refresh -s read:enterprise`")
+        raise typer.Exit(1)
+    for login in logins:
+        console.print(login)
+    console.print(f"\n{len(logins)} organisations. For config.toml:\norgs = {json.dumps(logins)}", soft_wrap=True)
 
 
 @triage_app.command("export")
@@ -281,10 +325,12 @@ def triage_export(
     config: ConfigOpt = Path("config.toml"),
     bands: Annotated[str, typer.Option(help="Comma separated bands to include")] = "High,Medium,Low",
     include_triaged: Annotated[bool, typer.Option(help="Include findings that already have a decision")] = False,
+    org: Annotated[Optional[str], typer.Option("--org", help="Only these organisations (default: all)")] = None,
 ) -> None:
     """Write findings to CSV; fill in the status and note columns, then import."""
     _, store = _setup(config)
-    n = export_triage(store, out, [b.strip() for b in bands.split(",")], include_triaged)
+    n = export_triage(store, out, [b.strip() for b in bands.split(",")], include_triaged,
+                      _orgs(org) if org is not None else None)
     store.close()
     console.print(f"Wrote {n} findings to {out}. Valid statuses: {', '.join(STATUSES)} (or 'clear' to reset)")
 
